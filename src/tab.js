@@ -13,15 +13,21 @@
                 'class': this.class_
             });
 
+            var tab_header = jQuery('<div/>', {
+                'class': 'tab-header ui-widget-header ui-corner-all'
+            });
+            
             var title = this.make_title_bar();
-            this.el.append(title);
+            tab_header.append(title);
 
             var toolbar = this.create_toolbar();
-            this.el.append(toolbar);
+            tab_header.append(toolbar);
+            
+            this.el.append(tab_header);
         },
         make_title_bar: function() {
             var title = jQuery('<div/>', {
-                'class': 'tab-title-bar ui-widget-header ui-corner-all'
+                'class': 'tab-title-bar'
             });
 
             var menu = this.set_menu();
@@ -82,7 +88,7 @@
         },
         create_toolbar: function() {
             var toolbar = jQuery('<div/>', {
-                'class': 'ui-widget-header ui-corner-all'
+                'class': 'tab-toolbar'
             });
             var add_button = function(tool) {
                 var click_func = function() {
@@ -90,7 +96,7 @@
                 };
                 var button = jQuery('<button/>').button({
                     id: tool[0],
-                    text: tool[2],
+                    text: true,
                     icons: {
                         primary: tool[1]
                     },
@@ -258,7 +264,7 @@
                 ].forEach(function(menu_action) {
                     var button = jQuery('<button/>').button({
                         id: menu_action[0],
-                        text: true,
+                        text: false,
                         icons: {
                             primary: menu_action[1],
                             secondary: 'ui-icon-triangle-1-s'

@@ -1326,7 +1326,7 @@
                 'class': 'form-separator'
             });
             if (text) {
-                this.el.append(jQuery('<p/>', {
+                this.el.append(jQuery('<span/>', {
                     'text': text
                 }));
             }
@@ -1540,7 +1540,7 @@
                 attributes);
             this.el = jQuery('<input/>', {
                 'type': 'input',
-                'class': this.class_
+                'class': this.class_ + ' ui-widget ui-widget-content ui-corner-all'
             });
             this.el.change(this.focus_out.bind(this));
         },
@@ -1573,10 +1573,11 @@
             Sao.View.Form.Date._super.init.call(this, field_name, model,
                 attributes);
             this.el = jQuery('<div/>', {
-                'class': this.class_
+                'class': this.class_ + ' ui-widget'
             });
             this.date = jQuery('<input/>', {
-                'type': 'input'
+                'type': 'input',
+                'class': 'ui-widget-content ui-corner-all'
             });
             this.el.append(jQuery('<div/>').append(this.date));
             this.date.datepicker({
@@ -1587,7 +1588,8 @@
                 'icons': {
                     'primary': 'ui-icon-calendar'
                 },
-                'text': false
+                'text': false,
+                'label': 'Show calendar'  // TODO: translate
             });
             this.el.prepend(this.button);
             this.button.click(function() {
@@ -1671,10 +1673,14 @@
         init: function(field_name, model, attributes) {
             Sao.View.Form.Selection._super.init.call(this, field_name, model,
                 attributes);
-            this.el = jQuery('<select/>', {
-                'class': this.class_
+            this.el = jQuery('<div/>', {
+                'class': this.class_ + ' ui-widget'
             });
-            this.el.change(this.focus_out.bind(this));
+            this.select = jQuery('<select/>', {
+                'class': 'form-selection ui-widget-content'
+            });
+            this.el.append(jQuery('<div/>').append(this.select));
+            this.select.change(this.focus_out.bind(this));
             Sao.common.selection_mixin.init.call(this);
             this.init_selection();
         },
@@ -1689,10 +1695,22 @@
                     if (callbak) {
                         callbak();
                     }
+                    if (field) {
+                        var selection_widget = this;
+                        this.select.combobox({
+                            'change': function(event, selected_option) {
+                                selection_widget.set_value(record, field);
+                            },
+                            'select': function(event, selected_option) {
+                                selection_widget.set_value(record, field);
+                            }
+                        });
+                        // TODO: on_change/on_change_with doesn't work with combobox()
+                    }
                 }.bind(this));
         },
         set_selection: function(selection) {
-            var select = this.el;
+            var select = this.select;
             select.empty();
             selection.forEach(function(e) {
                 select.append(jQuery('<option/>', {
@@ -1705,7 +1723,7 @@
             Sao.View.Form.Selection._super.display.call(this, record, field);
             this.update_selection(record, field, function() {
                 if (!field) {
-                    this.el.val('');
+                    this.select.val('');
                     return;
                 }
                 var value = field.get(record);
@@ -1720,7 +1738,7 @@
                     prm = Sao.common.selection_mixin.get_inactive_selection
                         .call(this, value);
                     prm.done(function(inactive) {
-                        this.el.append(jQuery('<option/>', {
+                        this.select.append(jQuery('<option/>', {
                             value: inactive[0],
                             text: inactive[1],
                             disabled: true
@@ -1733,7 +1751,7 @@
                     if (value === null) {
                         value = '';
                     }
-                    this.el.val('' + value);
+                    this.select.val('' + value);
                 }.bind(this));
             }.bind(this));
         },
@@ -1748,7 +1766,7 @@
                     return null;
                 } else if (val === null) {
                     // The selected value is disabled
-                    val = this.el.find(':selected').attr('value');
+                    val = this.select.find(':selected').attr('value');
                 }
                 return parseInt(val, 10);
             }
@@ -1810,7 +1828,7 @@
             Sao.View.Form.Text._super.init.call(this, field_name, model,
                 attributes);
             this.el = jQuery('<textarea/>', {
-                'class': this.class_
+                'class': this.class_ + ' ui-widget ui-widget-content ui-corner-all'
             });
             this.el.change(this.focus_out.bind(this));
         },
@@ -1835,10 +1853,11 @@
             Sao.View.Form.Many2One._super.init.call(this, field_name, model,
                 attributes);
             this.el = jQuery('<div/>', {
-                'class': this.class_
+                'class': this.class_ + ' ui-widget'
             });
             this.entry = jQuery('<input/>', {
-                'type': 'input'
+                'type': 'input',
+                'class': 'ui-widget-content  ui-corner-all'
             });
             this.entry.on('keyup', this.key_press.bind(this));
             this.el.append(jQuery('<div/>').append(this.entry));
@@ -1846,7 +1865,8 @@
                 'icons': {
                     'primary': 'ui-icon-search'
                 },
-                'text': false
+                'text': false,
+                'label': 'Search a record'   // TODO: translate
             });
             this.but_open.click(this.edit.bind(this));
             this.el.prepend(this.but_open);
@@ -1854,7 +1874,8 @@
                 'icons': {
                     'primary': 'ui-icon-document'
                 },
-                'text': false
+                'text': false,
+                'label': 'Create a new record'    // Translate
             });
             this.but_new.click(this.new_.bind(this));
             this.el.prepend(this.but_new);
@@ -1896,12 +1917,16 @@
                 this.but_open.button({
                     'icons': {
                         'primary': 'ui-icon-folder-open'
-                    }});
+                    },
+                    'label': 'Open a record'   // TODO: translate
+                    });
             } else {
                 this.but_open.button({
                     'icons': {
                         'primary': 'ui-icon-search'
-                    }});
+                    },
+                    'label': 'Search a record'   // TODO: translate
+                    });
             }
         },
         set_readonly: function(readonly) {
@@ -2130,7 +2155,9 @@
         init: function(field_name, model, attributes) {
             Sao.View.Form.Reference._super.init.call(this, field_name, model,
                 attributes);
-            this.select = jQuery('<select/>');
+            this.select = jQuery('<select/>', {
+                'class': 'ui-widget-content ui-corner-all'
+            });
             this.el.prepend(jQuery('<span/>').text('-'));
             this.el.prepend(this.select);
             this.select.change(this.select_changed.bind(this));
@@ -2261,10 +2288,10 @@
             this._readonly = true;
 
             this.el = jQuery('<div/>', {
-                'class': this.class_
+                'class': this.class_ + ' ui-widget'
             });
             this.menu = jQuery('<div/>', {
-                'class': this.class_ + '-menu'
+                'class': this.class_ + '-menu ui-widget-header'
             });
             this.el.append(this.menu);
 
@@ -2384,7 +2411,7 @@
             toolbar.append(this.but_switch);
 
             this.content = jQuery('<div/>', {
-                'class': this.class_ + '-content'
+                'class': this.class_ + '-content ui-widget-content'
             });
             this.el.append(this.content);
 
@@ -2582,10 +2609,10 @@
             this._readonly = true;
 
             this.el = jQuery('<div/>', {
-                'class': this.class_
+                'class': this.class_ + ' ui-widget'
             });
             this.menu = jQuery('<div/>', {
-                'class': this.class_ + '-menu'
+                'class': this.class_ + '-menu ui-widget-header'
             });
             this.el.append(this.menu);
 
@@ -2601,7 +2628,8 @@
             this.menu.append(toolbar);
 
             this.entry = jQuery('<input/>', {
-                type: 'input'
+                type: 'input',
+                'class': 'ui-widget ui-widget-content ui-corner-all'
             });
             this.entry.on('keyup', this.key_press.bind(this));
             toolbar.append(this.entry);
@@ -2629,7 +2657,7 @@
             toolbar.append(this.but_remove);
 
             this.content = jQuery('<div/>', {
-                'class': this.class_ + '-content'
+                'class': this.class_ + '-content ui-widget-content'
             });
             this.el.append(this.content);
 
@@ -2780,21 +2808,23 @@
             this.filename = attributes.filename || null;
 
             this.el = jQuery('<div/>', {
-                'class': this.class_
+                'class': this.class_ + ' ui-widget'
             });
 
             var inputs = jQuery('<div/>');
             this.el.append(inputs);
             if (this.filename && attributes.filename_visible) {
                 this.text = jQuery('<input/>', {
-                    type: 'input'
+                    'type': 'input',
+                    'class': 'ui-widget-content  ui-corner-all'
                 });
                 this.text.change(this.focus_out.bind(this));
                 this.text.on('keyup', this.key_press.bind(this));
                 inputs.append(this.text);
             }
             this.size = jQuery('<input/>', {
-                type: 'input'
+                'type': 'input',
+                'class': 'ui-widget-content  ui-corner-all'
             });
             inputs.append(this.size);
 
@@ -2802,7 +2832,8 @@
                 icons: {
                     primary: 'ui-icon-document'
                 },
-                text: false
+                text: false,
+                label: 'Select a File...'   // TODO: translate
             });
             this.but_new.click(this.new_.bind(this));
             this.el.prepend(this.but_new);
@@ -2812,7 +2843,8 @@
                     icons: {
                         primary: 'ui-icon-folder-open'
                     },
-                    text: false
+                    text: false,
+                    label: 'Open...'    // TODO: translate
                 });
                 this.but_open.click(this.open.bind(this));
                 this.el.prepend(this.but_open);
@@ -2822,7 +2854,8 @@
                 icons: {
                     primary: 'ui-icon-disk'
                 },
-                text: false
+                text: false,
+                label: 'Save As...'     // TODO: translate
             });
             this.but_save_as.click(this.save_as.bind(this));
             this.el.prepend(this.but_save_as);
@@ -2831,7 +2864,8 @@
                 icons: {
                     primary: 'ui-icon-trash'
                 },
-                text: false
+                text: false,
+                label: 'Clear'  // TODO: translate
             });
             this.but_remove.click(this.remove.bind(this));
             this.el.prepend(this.but_remove);

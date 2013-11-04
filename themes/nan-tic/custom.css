@@ -1,0 +1,43 @@
+/* Tree View */
+.treeview > table.tree > tbody > tr:nth-child(odd) {
+    background: #f5f8f9 url(images/ui-bg_glass_85_dfeffc_1x400.png) 50% 50% repeat-x;
+}
+
+.treeview > table.tree > tbody > tr:hover {
+    background: #d0e5f5 url(images/ui-bg_glass_75_d0e5f5_1x400.png) 50% 50% repeat-x;
+}
+
+.treeview > table.tree > tbody > tr > td {
+    border-color: #a6c9e2;
+}
+
+/* Form View */
+.form .ui-widget-header {
+    background: #dfeffc url(images/ui-bg_glass_85_dfeffc_1x400.png) 50% 50% repeat-x;
+}
+
+.form .form-one2many-menu, .form .form-one2many-content, .form .form-many2many-menu, .form .form-many2many-content {
+    border-color: #a6c9e2;
+}
+
+/* Dropdown menu text */
+.ui-widget-header a {
+    color: #c5dbec;
+}
+
+/* From sao-fixes.css */
+.treeview > table.tree {
+    border-color: #a6c9e2;
+}
+.screen-container > .content-box > .treeview > table.tree > thead > tr > th {
+    border-color: #a6c9e2;
+}
+
+.form-notebook .ui-widget-header {
+    border-color: #a6c9e2;
+}
+
+.form .form-one2many-menu,
+.form .form-many2many-menu {
+    color: #2e6e9e;
+}

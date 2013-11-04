@@ -1522,7 +1522,7 @@
                 } else {
                     values = record2.get();
                     delete values[parent_name];
-                    result.push(['create', values]);
+                    result.push(['create', [values]]);
                 }
             }
             if (jQuery.isEmptyObject(result[0][1])) {

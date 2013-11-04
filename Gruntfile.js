@@ -3,6 +3,13 @@ module.exports = function(grunt) {
   // Project configuration.
   grunt.initConfig({
     pkg: grunt.file.readJSON('package.json'),
+    copy: {
+        theme: {
+            files: [
+                {src: ['themes/**'], dest: 'dist/'}
+            ]
+        }
+    },
     concat: {
         dist: {
             src: [
@@ -79,11 +86,16 @@ module.exports = function(grunt) {
         styles: {
             files: ['src/*.less'],
             tasks: 'less:dev'
+        },
+        theme_styles: {
+            files: ['themes/*/*.js', 'themes/*/*.css', 'themes/*/images'],
+            tasks: 'copy:theme'
         }
     }
   });
 
   // Load the plugin that provides the "uglify" task.
+  grunt.loadNpmTasks('grunt-contrib-copy');
   grunt.loadNpmTasks('grunt-contrib-concat');
   grunt.loadNpmTasks('grunt-contrib-jshint');
   grunt.loadNpmTasks('grunt-contrib-uglify');
@@ -91,7 +103,7 @@ module.exports = function(grunt) {
   grunt.loadNpmTasks('grunt-contrib-watch');
 
   // Default task(s).
-  grunt.registerTask('default', ['concat', 'jshint', 'uglify', 'less:default']);
-  grunt.registerTask('dev', ['concat', 'jshint', 'less:dev']);
+  grunt.registerTask('default', ['copy', 'concat', 'jshint', 'uglify', 'less:default']);
+  grunt.registerTask('dev', ['copy', 'concat', 'jshint', 'less:dev']);
 
 };

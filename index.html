@@ -21,6 +21,16 @@ this repository contains the full copyright notices and license terms. -->
                 document.write(unescape('%3CLINK rel="stylesheet" type="text/css" href="http://code.jquery.com/ui/1.9.2/themes/base/jquery-ui.css" media="screen"/%3E'));
             }
         </SCRIPT>
+        <!-- ComboBox from http://www.benknowscode.com/2013/03/finishing-jquery-ui-autocomplete_4743.html -->
+        <SCRIPT type="text/javascript" src="external/jquery.ui.combobox.js"></SCRIPT>
+        <LINK rel="stylesheet" type="text/css" href="external/jquery.ui.combobox.css"
+        media="screen"/>
+        <SCRIPT type="text/javascript">
+            if (typeof $.combobox == 'undefined') {
+                document.write(unescape('%3CSCRIPT type="text/javascript" src="http://bseth99.github.io/jquery-ui-extensions/ui/jquery.ui.combobox.js"%3E%3C/SCRIPT%3E'));
+                document.write(unescape('%3CLINK rel="stylesheet" type="text/css" href="http://bseth99.github.io/jquery-ui-extensions/themes/base/jquery.ui.combobox.css" media="screen"/%3E'));
+            }
+        </SCRIPT>
         <SCRIPT type="text/javascript" src="dist/sao.min.js"></SCRIPT>
         <LINK rel="stylesheet" type="text/css" href="dist/sao.min.css"
         media="screen"/>
@@ -28,6 +38,16 @@ this repository contains the full copyright notices and license terms. -->
             if (typeof Sao == 'undefined') {
                 document.write(unescape('%3CSCRIPT type="text/javascript" src="dist/sao.js"%3E%3C/SCRIPT%3E'));
                 document.write(unescape('%3CLINK rel="stylesheet" type="text/css" href="dist/sao.css" media="screen"/%3E'));
+            }
+        </SCRIPT>
+        <SCRIPT type="text/javascript" src="dist/themes/nan-tic/nan-tic.js"></SCRIPT>
+        <SCRIPT type="text/javascript">
+            if (active_sao_theme == 'nan-tic/') {
+                document.write(unescape('%3CLINK rel="stylesheet" type="text/css" href="dist/themes/nan-tic/sao-fixes.css" media="screen"/%3E'));
+                document.write(unescape('%3CLINK rel="stylesheet" type="text/css" href="dist/themes/nan-tic/jquery-ui-1.10.3.redmon.css" media="screen"/%3E'));
+                document.write(unescape('%3CLINK rel="stylesheet" type="text/css" href="dist/themes/nan-tic/custom.css" media="screen"/%3E'));
+            } else if (active_sao_theme == 'fixes/') {
+                document.write(unescape('%3CLINK rel="stylesheet" type="text/css" href="dist/themes/nan-tic/sao-fixes.css" media="screen"/%3E'));
             }
         </SCRIPT>
     </HEAD>
