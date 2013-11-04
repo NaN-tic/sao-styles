@@ -120,15 +120,6 @@
         var database_div, database_select;
         var login_div, login_input, password_input;
 
-        /* auto login */
-        var session = new Sao.Session('tryton_sao',
-                    'admin');
-        var prm = session.do_login('admin', 'admin');
-        prm.done(function() {
-            parent_dfd.resolve(session);
-        });
-        return;
-
         var ok_func = function() {
             var login_val = login_input.val();
             var password_val = password_input.val();
