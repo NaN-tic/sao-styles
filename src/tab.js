@@ -17,7 +17,7 @@
                 'class': 'tab-header ui-widget-header ui-corner-all'
             });
             this.title = this.make_title_bar();
-            tab_header.append(this.title)
+            tab_header.append(this.title);
 
             var toolbar = this.create_toolbar();
             tab_header.append(toolbar);
