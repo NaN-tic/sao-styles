@@ -14,6 +14,9 @@
         },
         get_fields: function() {
             return Object.keys(this.fields);
+        },
+        get_buttons: function() {
+            return [];
         }
     });
 
@@ -90,10 +93,13 @@
             });
             this.expanded = {};
             this.children_field = children_field;
-            this.keyword_open = xml.children()[0].getAttribute('keyword_open');
+            var top_node = xml.children()[0];
+            this.keyword_open = top_node.getAttribute('keyword_open');
+            this.editable = top_node.getAttribute('editable');
 
             // Columns
             this.columns = [];
+            this.editable_widgets = [];
             this.create_columns(screen.model, xml);
 
             // Table of records
@@ -144,7 +150,7 @@
         },
         create_columns: function(model, xml) {
             xml.find('tree').children().each(function(pos, child) {
-                var column, attribute;
+                var column, editable_column, attribute;
                 var attributes = {};
                 for (var i = 0, len = child.attributes.length; i < len; i++) {
                     attribute = child.attributes[i];
@@ -180,6 +186,14 @@
                         attributes.widget);
                     column = new ColumnFactory(model, attributes);
 
+                    if (this.editable) {
+                        var EditableBuilder = Sao.View.editabletree_widget_get(
+                                attributes.widget);
+                        editable_column = new EditableBuilder(name, model,
+                                attributes);
+                        this.editable_widgets.push(editable_column);
+                    }
+
                     var prefixes = [], suffixes = [];
                     // TODO support for url/email/callto/sip
                     if ('icon' in attributes) {
@@ -214,6 +228,15 @@
                 this.columns.push(column);
             }.bind(this));
         },
+        get_buttons: function() {
+            var buttons = [];
+            this.columns.forEach(function(column) {
+                if (column instanceof Sao.View.Tree.ButtonColumn) {
+                    buttons.push(column);
+                }
+            });
+            return buttons;
+        },
         display: function(selected, expanded) {
             selected = selected || this.get_selected_paths();
             expanded = expanded || [];
@@ -222,19 +245,42 @@
                         [[current_record.id]])) {
                 selected = [[current_record.id]];
             }
+
+            if (this.screen.group.length != this.rows.length) {
+                this.construct(selected, expanded);
+                this.redraw(selected, expanded);
+            } else {
+                this.redraw(selected, expanded);
+            }
+        },
+        construct: function(selected, expanded) {
             this.rows = [];
             this.tbody.empty();
             var add_row = function(record, pos, group) {
-                var tree_row = new Sao.View.Tree.Row(this, record, pos);
+                var RowBuilder;
+                if (this.editable) {
+                    RowBuilder = Sao.View.Tree.RowEditable;
+                } else {
+                    RowBuilder = Sao.View.Tree.Row;
+                }
+                var tree_row = new RowBuilder(this, record, pos);
                 this.rows.push(tree_row);
-                tree_row.display(selected, expanded);
+                tree_row.construct(selected, expanded);
             };
-            this.screen.group.slice(0, this.display_size).forEach(add_row.bind(this));
+            this.screen.group.slice(0, this.display_size).forEach(
+                    add_row.bind(this));
             if (this.display_size >= this.screen.group.length) {
                 this.more.hide();
             } else {
                 this.more.show();
             }
+        },
+        redraw: function(selected, expanded) {
+            var redraw_row = function(record, pos, group) {
+               this.rows[pos].redraw(selected, expanded);
+            };
+            this.screen.group.slice(0, this.display_size).forEach(
+                    redraw_row.bind(this));
         },
         switch_: function(path) {
             this.screen.row_activate();
@@ -376,16 +422,6 @@
             path.push(pos);
             this.path = path.join('.');
             this.el = jQuery('<tr/>');
-            if (this.tree.selection_mode != Sao.common.SELECTION_NONE) {
-                var td = jQuery('<td/>');
-                this.el.append(td);
-                this.selection = jQuery('<input/>', {
-                    'type': 'checkbox',
-                    'class': 'selection'
-                });
-                this.selection.change(this.selection_changed.bind(this));
-                td.append(this.selection);
-            }
         },
         is_expanded: function() {
             return (this.path in this.tree.expanded);
@@ -403,32 +439,43 @@
             }
             return this.parent_.get_id_path().concat([this.record.id]);
         },
-        display: function(selected, expanded) {
+        build_widgets: function() {
+            var table = jQuery('<table/>');
+            table.css('width', '100%');
+            var row = jQuery('<tr/>');
+            table.append(row);
+            return [table, row];
+        },
+        construct: function(selected, expanded) {
             selected = selected || [];
             expanded = expanded || [];
-            var idx;
-            var depth = this.path.split('.').length;
-            var update_expander = function() {
-                if (jQuery.isEmptyObject(
-                            this.record.field_get(
-                                this.children_field))) {
 
-                    this.expander.css('background', 'none');
-                }
-            };
-            // Use this handler to allow customization of select_row for the
-            // menu
-            var click_handler = function(event_) {
-                this.select_row(event_);
-            };
+            var el_node = this.el[0];
+            while (el_node.firstChild) {
+                el_node.removeChild(el_node.firstChild);
+            }
+
+            var td;
+            if (this.tree.selection_mode != Sao.common.SELECTION_NONE) {
+                td = jQuery('<td/>');
+                this.el.append(td);
+                this.selection = jQuery('<input/>', {
+                    'type': 'checkbox',
+                    'class': 'selection'
+                });
+                this.selection.change(this.selection_changed.bind(this));
+                td.append(this.selection);
+            }
+
+            var depth = this.path.split('.').length;
             for (var i = 0; i < this.tree.columns.length; i++) {
-                var td = jQuery('<td/>');
-                td.click(click_handler.bind(this));
-                var table = jQuery('<table/>');
-                table.css('width', '100%');
+                td = jQuery('<td/>');
+                td.one('click', {column: i, td: td},
+                        this.select_row.bind(this));
+                var widgets = this.build_widgets();
+                var table = widgets[0];
+                var row = widgets[1];
                 td.append(table);
-                var row = jQuery('<tr/>');
-                table.append(row);
                 if ((i === 0) && this.children_field) {
                     var expanded_icon = 'ui-icon-plus';
                     if (this.is_expanded() ||
@@ -444,52 +491,108 @@
                     this.expander.click(this.toggle_row.bind(this));
                     row.append(jQuery('<td/>').append(this.expander
                                 ).css('width', 1));
-                    this.record.load(this.children_field).done(
-                            update_expander.bind(this));
                 }
                 var column = this.tree.columns[i];
                 var j;
-                for (j = 0; j < column.prefixes.length; j++) {
-                    var prefix = column.prefixes[j];
-                    row.append(jQuery('<td/>').append(
-                                prefix.render(this.record)).css('width', 1));
+                if (column.prefixes) {
+                    for (j = 0; j < column.prefixes.length; j++) {
+                        var prefix = column.prefixes[j];
+                        row.append(jQuery('<td/>').css('width', 1));
+                    }
                 }
-                row.append(jQuery('<td/>').append(
-                            column.render(this.record)));
-                for (j = 0; j < column.suffixes.length; j++) {
-                    var suffix = column.suffixes[j];
-                    row.append(jQuery('<td/>').append(
-                                suffix.render(this.record)).css('width', 1));
+                row.append(jQuery('<td/>'));
+                if (column.suffixes) {
+                    for (j = 0; j < column.suffixes.length; j++) {
+                        var suffix = column.suffixes[j];
+                        row.append(jQuery('<td/>').css('width', 1));
+                    }
                 }
                 if (column.attributes.tree_invisible) {
                     td.hide();
                 }
                 this.el.append(td);
             }
-            var row_id_path = this.get_id_path();
-            this.set_selection(Sao.common.contains(selected, row_id_path));
             if (this.parent_) {
                 var last_child = this.parent_.get_last_child();
                 last_child.el.after(this.el);
             } else {
                 this.tree.tbody.append(this.el);
             }
+            var row_id_path = this.get_id_path();
             if (this.is_expanded() ||
                     Sao.common.contains(expanded, row_id_path)) {
                 this.tree.expanded[this.path] = this;
-                var add_children = function() {
-                    var add_row = function(record, pos, group) {
-                        var tree_row = new Sao.View.Tree.Row(this.tree, record,
-                                pos, this);
-                        tree_row.display(selected, expanded);
-                        this.rows.push(tree_row);
-                    };
-                    var children = this.record.field_get_client(
-                            this.children_field);
-                    children.forEach(add_row.bind(this));
-                };
-                this.record.load(this.children_field).done(
-                        add_children.bind(this));
+                this.expand_children(selected, expanded);
+            }
+        },
+        redraw: function(selected, expanded) {
+            selected = selected || [];
+            expanded = expanded || [];
+            var update_expander = function() {
+                if (jQuery.isEmptyObject(
+                            this.record.field_get(
+                                this.children_field))) {
+                    this.expander.css('background', 'none');
+                }
+            };
+            var child_offset = 0;
+            if (this.tree.selection_mode != Sao.common.SELECTION_NONE) {
+                child_offset += 1;
+            }
+
+            for (var i = 0; i < this.tree.columns.length; i++) {
+                if ((i === 0) && this.children_field) {
+                    this.record.load(this.children_field).done(
+                        update_expander.bind(this));
+                }
+                var column = this.tree.columns[i];
+                var inside_tr = jQuery(this.el.children()[i + child_offset])
+                                .find('tr');
+                var current_td = jQuery(inside_tr.children()[0]);
+                if (this.children_field) {
+                    current_td = current_td.next();
+                }
+                var prefix, suffix;
+                if (column.prefixes) {
+                    for (var j = 0; j < column.prefixes.length; j++) {
+                        prefix = column.prefixes[j];
+                        current_td.html(prefix.render(this.record));
+                        current_td = current_td.next();
+                    }
+                }
+                jQuery(current_td).html(column.render(this.record));
+                if (column.suffixes) {
+                    current_td = current_td.next();
+                    for (var k = 0; k < column.suffixes.length; k++) {
+                        suffix = column.suffixes[k];
+                        current_td.html(suffix.render(this.record));
+                        current_td = current_td.next();
+                    }
+                }
+            }
+            var row_id_path = this.get_id_path();
+            this.set_selection(Sao.common.contains(selected, row_id_path));
+            if (this.is_expanded() ||
+                    Sao.common.contains(expanded, row_id_path)) {
+                this.tree.expanded[this.path] = this;
+                if (!this.record._values[this.children_field] ||
+                        (this.record._values[this.children_field].length > 0 &&
+                         this.rows.length === 0)) {
+                    this.expand_children(selected, expanded);
+                } else {
+                    var child_row;
+                    for (i = 0; i < this.rows.length; i++) {
+                        child_row = this.rows[i];
+                        child_row.redraw(selected, expanded);
+                    }
+                }
+                if (this.expander) {
+                    this.update_expander(true);
+                }
+            } else {
+                if (this.expander) {
+                    this.update_expander(false);
+                }
             }
             if (this.record.deleted() || this.record.removed()) {
                 this.el.css('text-decoration', 'line-through');
@@ -499,15 +602,51 @@
         },
         toggle_row: function() {
             if (this.is_expanded()) {
-                this.expander.removeClass('ui-icon-minus');
-                this.expander.addClass('ui-icon-plus');
+                this.update_expander(false);
                 delete this.tree.expanded[this.path];
+                this.collapse_children();
             } else {
+                this.update_expander(true);
+                this.tree.expanded[this.path] = this;
+                this.expand_children();
+            }
+            return false;
+        },
+        update_expander: function(expanded) {
+            if (expanded) {
                 this.expander.removeClass('ui-icon-plus');
                 this.expander.addClass('ui-icon-minus');
-                this.tree.expanded[this.path] = this;
+            } else {
+                this.expander.removeClass('ui-icon-minus');
+                this.expander.addClass('ui-icon-plus');
             }
-            this.tree.display();
+        },
+        collapse_children: function() {
+            this.rows.forEach(function(row, pos, rows) {
+                row.collapse_children();
+                var node = row.el[0];
+                node.parentNode.removeChild(node);
+            });
+            this.rows = [];
+        },
+        expand_children: function(selected, expanded) {
+            var add_children = function() {
+                if (!jQuery.isEmptyObject(this.rows)) {
+                    return;
+                }
+                var add_row = function(record, pos, group) {
+                    var tree_row = new Sao.View.Tree.Row(this.tree, record,
+                            pos, this);
+                    tree_row.construct(selected, expanded);
+                    tree_row.redraw(selected, expanded);
+                    this.rows.push(tree_row);
+                };
+                var children = this.record.field_get_client(
+                        this.children_field);
+                children.forEach(add_row.bind(this));
+            };
+            this.record.load(this.children_field).done(
+                    add_children.bind(this));
         },
         select_row: function(event_) {
             if (this.tree.selection_mode == Sao.common.SELECTION_NONE) {
@@ -529,6 +668,12 @@
                 this.set_selection(!this.is_selected());
                 this.selection_changed();
             }
+
+            // The 'click'-event must be handled next time the row is clicked
+            var td = event_.data.td;
+            var column = event_.data.column;
+            td.one('click', {column: column, td: td},
+                    this.select_row.bind(this));
         },
         is_selected: function() {
             if (this.tree.selection_mode == Sao.common.SELECTION_NONE) {
@@ -555,6 +700,130 @@
                         this.tree.selected_records()[0] || null);
             }
             this.tree.update_selection();
+        }
+    });
+
+    Sao.View.Tree.RowEditable = Sao.class_(Sao.View.Tree.Row, {
+        init: function(tree, record, pos, parent) {
+            Sao.View.Tree.RowEditable._super.init.call(this, tree, record, pos,
+                parent);
+            this.edited_column = undefined;
+        },
+        build_widgets: function() {
+            var widgets = Sao.View.Tree.RowEditable._super.build_widgets(this);
+            var table = widgets[0];
+            var editable_row = jQuery('<tr/>');
+            editable_row.append(jQuery('<td/>'));
+            table.append(editable_row);
+            return widgets;
+        },
+        select_row: function(event_) {
+            var previously_selected, previous_td;
+            var inner_rows, readonly_row, editable_row, current_td;
+            var field, widget;
+
+            this.tree.rows.forEach(function(row) {
+                if (row.is_selected()) {
+                    previously_selected = row;
+                }
+                if (row != this) {
+                    row.set_selection(false);
+                }
+            }.bind(this));
+            this.selection_changed();
+
+            var save_prm;
+            if (previously_selected && previously_selected != this) {
+                save_prm = previously_selected.record.save();
+            } else {
+                save_prm = jQuery.when();
+            }
+            save_prm.done(function () {
+                if (previously_selected &&
+                    previously_selected.edited_column !== undefined) {
+                    readonly_row = previously_selected.get_readonly_row();
+                    editable_row = previously_selected.get_editable_row();
+                    previous_td = previously_selected.get_active_td();
+                    previous_td.one('click', {
+                        td: previous_td,
+                        column: previously_selected.edited_column
+                    }, previously_selected.select_row.bind(previously_selected));
+                    readonly_row.show();
+                    editable_row.hide();
+                    previously_selected.edited_column = undefined;
+                }
+                if (this.is_selected()) {
+                    this.edited_column = event_.data.column;
+                    readonly_row = this.get_readonly_row();
+                    editable_row = this.get_editable_row();
+                    current_td = this.get_active_td();
+                    widget = this.tree.editable_widgets[this.edited_column];
+                    widget.view = this.tree;
+                    editable_row.find('td').append(widget.el);
+                    // We use keydown to be able to catch TAB events
+                    current_td.one('keydown', this.key_press.bind(this));
+                    field = this.record.model.fields[widget.field_name];
+                    widget.display(this.record, field);
+                    readonly_row.hide();
+                    editable_row.show();
+                } else {
+                    this.set_selection(true);
+                    this.selection_changed();
+                    var td = event_.data.td;
+                    var column = event_.data.column;
+                    td.one('click', {column: column, td: td},
+                        this.select_row.bind(this));
+                }
+            }.bind(this));
+        },
+        get_readonly_row: function() {
+            return this._get_inner_element(1);
+        },
+        get_editable_row: function() {
+            return this._get_inner_element(2);
+        },
+        get_active_td: function() {
+            return this._get_inner_element();
+        },
+        _get_inner_element: function(child_index) {
+            // We add two because of the selection box at the start and
+            // because nth-child is 1-indexed
+            var selector = 'td:nth-child(' + (this.edited_column + 2) + ')';
+            if (child_index !== undefined) {
+                selector += ' table tr:nth-child(' + child_index + ')';
+            }
+            return this.el.find(selector);
+        },
+        key_press: function(event_) {
+            var current_td, selector, next_column;
+            if (event_.which == Sao.common.TAB_KEYCODE) {
+                var sign = 1;
+                if (event_.shiftKey) {
+                    sign = -1;
+                }
+                event_.preventDefault();
+                next_column = ((this.edited_column + sign * 1) %
+                    this.tree.columns.length);
+                selector = 'td:nth-child(' + (next_column + 2) + ')';
+                window.setTimeout(function() {
+                    this.el.find(selector).trigger('click');
+                }.bind(this), 0);
+            } else if (event_.which == Sao.common.UP_KEYCODE ||
+                event_.which == Sao.common.DOWN_KEYCODE) {
+                var next_row;
+                if (event_.which == Sao.common.UP_KEYCODE) {
+                    next_row = this.el.prev('tr');
+                } else {
+                    next_row = this.el.next('tr');
+                }
+                selector = 'td:nth-child(' + (this.edited_column + 2) + ')';
+                window.setTimeout(function() {
+                    next_row.find(selector).trigger('click');
+                    next_row.find(selector).trigger('click');
+                }.bind(this), 0);
+            }
+            this.get_active_td(this).one('keydown',
+                this.key_press.bind(this));
         }
     });
 
@@ -1032,6 +1301,16 @@
             this.state_widgets.push(group);
             container.add(attributes, group);
         },
+        get_buttons: function() {
+            var buttons = [];
+            for (var j in this.state_widgets) {
+                var widget = this.state_widgets[j];
+                if (widget instanceof Sao.common.Button) {
+                    buttons.push(widget);
+                }
+            }
+            return buttons;
+        },
         display: function() {
             var record = this.screen.current_record;
             var field;
@@ -1404,8 +1683,8 @@
         switch (type) {
             case 'char':
                 return Sao.View.Form.Char;
-            case 'sha':
-                return Sao.View.Form.Sha;
+            case 'password':
+                return Sao.View.Form.Password;
             case 'date':
                 return Sao.View.Form.Date;
             case 'datetime':
@@ -1434,6 +1713,8 @@
                 return Sao.View.Form.Many2Many;
             case 'binary':
                 return Sao.View.Form.Binary;
+            case 'multiselection':
+                return Sao.View.Form.MultiSelection;
         }
     };
 
@@ -1468,6 +1749,9 @@
                 if (readonly === undefined) {
                     readonly = false;
                 }
+            }
+            if (this.view.screen.attributes.readonly) {
+                readonly = true;
             }
             this.set_readonly(readonly);
             var valid = true;
@@ -1558,10 +1842,10 @@
         }
     });
 
-    Sao.View.Form.Sha = Sao.class_(Sao.View.Form.Char, {
-        class_: 'form-sha',
+    Sao.View.Form.Password = Sao.class_(Sao.View.Form.Char, {
+        class_: 'form-password',
         init: function(field_name, model, attributes) {
-            Sao.View.Form.Sha._super.init.call(this, field_name, model,
+            Sao.View.Form.Password._super.init.call(this, field_name, model,
                 attributes);
             this.el.prop('type', 'password');
         }
@@ -1719,8 +2003,7 @@
                 }));
             });
         },
-        display: function(record, field) {
-            Sao.View.Form.Selection._super.display.call(this, record, field);
+        display_update_selection: function(record, field) {
             this.update_selection(record, field, function() {
                 if (!field) {
                     this.select.val('');
@@ -1754,6 +2037,10 @@
                     this.select.val('' + value);
                 }.bind(this));
             }.bind(this));
+        },
+        display: function(record, field) {
+            Sao.View.Form.Selection._super.display.call(this, record, field);
+            this.display_update_selection(record, field);
         },
         value_get: function() {
             var val = this.el.val();
@@ -2421,6 +2708,7 @@
                 view_ids: (attributes.view_ids || '').split(','),
                 views_preload: attributes.views || {},
                 row_activate: this.activate.bind(this),
+                readonly: attributes.readonly || false,
                 exclude_field: attributes.relation_field || null
             });
             this.prm = this.screen.switch_view(modes[0]).done(function() {
@@ -2783,19 +3071,34 @@
             }
         },
         edit: function() {
-            if (this.screen.current_record) {
-                var callback = function(result) {
-                    if (result) {
-                        this.screen.current_record.save().done(function() {
-                            this.screen.display();
-                        }.bind(this));
-                    } else {
-                        this.screen.current_record.cancel();
-                    }
-                };
-                var win = new Sao.Window.Form(this.screen,
-                        callback.bind(this));
+            if (jQuery.isEmptyObject(this.screen.current_record)) {
+                return;
             }
+            // Create a new screen that is not linked to the parent otherwise
+            // on the save of the record will trigger the save of the parent
+            var domain = this.field().get_domain(this.record());
+            var add_remove = this.record().expr_eval(
+                    this.attributes.add_remove);
+            if (!jQuery.isEmptyObject(add_remove)) {
+                domain = [domain, add_remove];
+            }
+            var screen = new Sao.Screen(this.attributes.relation, {
+                'domain': domain,
+                //'view_ids': (this.attributes.view_ids || '').split(','),
+                'mode': ['form'],
+                //'views_preload': this.attributes.views
+                readonly: this.attributes.readonly || false
+            });
+            screen.new_group([this.screen.current_record.id]);
+            var callback = function(result) {
+                if (result) {
+                    screen.current_record.save().done(function() {
+                        // Force a reload on next display
+                        this.screen.current_record.cancel();
+                    }.bind(this));
+                }
+            };
+            var win = new Sao.Window.Form(screen, callback.bind(this));
         }
     });
 
@@ -2999,4 +3302,195 @@
             }
         }
     });
+
+    Sao.View.Form.MultiSelection = Sao.class_(Sao.View.Form.Selection, {
+        class_: 'form-multiselection',
+        init: function(field_name, model, attributes) {
+            this.nullable_widget = false;
+            Sao.View.Form.MultiSelection._super.init.call(this, field_name,
+                model, attributes);
+            this.el.prop('multiple', true);
+        },
+        display_update_selection: function(record, field) {
+            var i, len, element;
+            this.update_selection(record, field, function() {
+                if (!field) {
+                    return;
+                }
+                var value = [];
+                var group = record.field_get_client(this.field_name);
+                for (i = 0, len = group.length; i < len; i++) {
+                    element = group[i];
+                    if (!~group.record_removed.indexOf(element) &&
+                        !~group.record_deleted.indexOf(element)) {
+                            value.push(element.id);
+                    }
+                }
+                this.el.val(value);
+            }.bind(this));
+        },
+        set_value: function(record, field) {
+            var value = this.el.val();
+            if (value) {
+                value = value.map(function(e) { return parseInt(e, 10); });
+            } else {
+                value = [];
+            field.set_client(record, value);
+            }
+        }
+    });
+
+    Sao.View.editabletree_widget_get = function(type) {
+        switch (type) {
+            case 'char':
+            case 'text':
+                return Sao.View.EditableTree.Char;
+            case 'date':
+                return Sao.View.EditableTree.Date;
+            case 'datetime':
+                return Sao.View.EditableTree.DateTime;
+            case 'integer':
+            case 'biginteger':
+                return Sao.View.EditableTree.Integer;
+            case 'float':
+            case 'numeric':
+                return Sao.View.EditableTree.Float;
+            case 'selection':
+                return Sao.View.EditableTree.Selection;
+            case 'float_time':
+                return Sao.View.EditableTree.FloatTime;
+            case 'boolean':
+                return Sao.View.EditableTree.Boolean;
+            case 'many2one':
+                return Sao.View.EditableTree.Many2One;
+            case 'one2many':
+            case 'many2many':
+                return Sao.View.EditableTree.One2Many;
+            default:
+                return Sao.View.EditableTree.Char;
+        }
+    };
+
+    Sao.View.EditableTree = {};
+
+    Sao.View.EditableTree.editable_mixin = function(widget) {
+        var key_press = function(event_) {
+            if (event_.which == Sao.common.TAB_KEYCODE) {
+                this.focus_out();
+            }
+        };
+        widget.el.on('keydown', key_press.bind(widget));
+    };
+
+    Sao.View.EditableTree.Char = Sao.class_(Sao.View.Form.Char, {
+        class_: 'editabletree-char',
+        init: function(field_name, model, attributes) {
+            Sao.View.EditableTree.Char._super.init.call(this, field_name,
+                model, attributes);
+            Sao.View.EditableTree.editable_mixin(this);
+        }
+    });
+
+    Sao.View.EditableTree.Date = Sao.class_(Sao.View.Form.Date, {
+        class_: 'editabletree-date',
+        init: function(field_name, model, attributes) {
+            Sao.View.EditableTree.Date._super.init.call(this, field_name,
+                model, attributes);
+            Sao.View.EditableTree.editable_mixin(this);
+        }
+    });
+
+    Sao.View.EditableTree.DateTime = Sao.class_(Sao.View.Form.DateTime, {
+        class_: 'editabletree-datetime',
+        init: function(field_name, model, attributes) {
+            Sao.View.EditableTree.DateTime._super.init.call(this, field_name,
+                model, attributes);
+            Sao.View.EditableTree.editable_mixin(this);
+        }
+    });
+
+    Sao.View.EditableTree.Integer = Sao.class_(Sao.View.Form.Integer, {
+        class_: 'editabletree-integer',
+        init: function(field_name, model, attributes) {
+            Sao.View.EditableTree.Integer._super.init.call(this, field_name,
+                model, attributes);
+            Sao.View.EditableTree.editable_mixin(this);
+        }
+    });
+
+    Sao.View.EditableTree.Float = Sao.class_(Sao.View.Form.Float, {
+        class_: 'editabletree-float',
+        init: function(field_name, model, attributes) {
+            Sao.View.EditableTree.Float._super.init.call(this, field_name,
+                model, attributes);
+            Sao.View.EditableTree.editable_mixin(this);
+        }
+    });
+
+    Sao.View.EditableTree.Selection = Sao.class_(Sao.View.Form.Selection, {
+        class_: 'editabletree-selection',
+        init: function(field_name, model, attributes) {
+            Sao.View.EditableTree.Selection._super.init.call(this, field_name,
+                model, attributes);
+            Sao.View.EditableTree.editable_mixin(this);
+        }
+    });
+
+    Sao.View.EditableTree.FloatTime = Sao.class_(Sao.View.Form.FloatTime, {
+        class_: 'editabletree-float_time',
+        init: function(field_name, model, attributes) {
+            Sao.View.EditableTree.FloatTime._super.init.call(this, field_name,
+                model, attributes);
+            Sao.View.EditableTree.editable_mixin(this);
+        }
+    });
+
+    Sao.View.EditableTree.Boolean = Sao.class_(Sao.View.Form.Boolean, {
+        class_: 'editabletree-boolean',
+        init: function(field_name, model, attributes) {
+            Sao.View.EditableTree.Boolean._super.init.call(this, field_name,
+                model, attributes);
+            Sao.View.EditableTree.editable_mixin(this);
+        }
+    });
+
+    Sao.View.EditableTree.Many2One = Sao.class_(Sao.View.Form.Many2One, {
+        class_: 'editabletree-many2one',
+        init: function(field_name, model, attributes) {
+            Sao.View.EditableTree.Many2One._super.init.call(this, field_name,
+                model, attributes);
+            this.el.on('keydown', this.key_press.bind(this));
+        },
+        key_press: function(event_) {
+            if (event_.which == Sao.common.TAB_KEYCODE) {
+                this.focus_out();
+            } else {
+                Sao.View.EditableTree.Many2One._super.key_press.call(this,
+                    event_);
+            }
+        }
+    });
+
+    Sao.View.EditableTree.One2Many = Sao.class_(Sao.View.EditableTree.Char, {
+        class_: 'editabletree-one2many',
+        init: function(field_name, model, attributes) {
+            Sao.View.EditableTree.One2Many._super.init.call(this, field_name,
+                model, attributes);
+        },
+        display: function(record, field) {
+            if (record) {
+                this.el.val('(' + field.get_client(record).length + ')');
+            } else {
+                this.el.val('');
+            }
+        },
+        key_press: function(event_) {
+            if (event_.which == Sao.common.TAB_KEYCODE) {
+                this.focus_out();
+            }
+        },
+        set_value: function(record, field) {
+        }
+    });
+
 }());

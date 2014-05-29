@@ -9,6 +9,7 @@
                 'class': 'wizard'
             });
             this.name = name;
+            this.action_id = null;
             this.id = null;
             this.ids = null;
             this.action = null;
@@ -26,6 +27,7 @@
         },
         run: function(attributes) {
             this.action = attributes.action;
+            this.action_id = attributes.data.action_id;
             this.id = attributes.data.id;
             this.ids = attributes.data.ids;
             this.model = attributes.data.model;
@@ -53,6 +55,7 @@
                 ctx.active_id = this.id;
                 ctx.active_ids = this.ids;
                 ctx.active_model = this.model;
+                ctx.action_id = this.action_id;
                 var data = {};
                 if (this.screen) {
                     data[this.screen_state] = this.screen.get_on_change_value();
@@ -72,24 +75,19 @@
                         this.state = this.end_state;
                     }
 
-                    if (result.actions) {
-                        if (!result.view) {
-                            this.end();
+                    var execute_actions = function execute_actions() {
+                        if (result.actions) {
+                            result.actions.forEach(function(action) {
+                                Sao.Action.exec_action(action[0], action[1],
+                                    jQuery.extend({}, this.context));
+                            });
                         }
-                        result.actions.forEach(function(action) {
-                            Sao.Action.exec_action(action[0], action[1], ctx);
-                        });
-                        if ((!result.view) ||
-                            (result.actions[result.actions.length - 1].type ==
-                             'ir.action.wizard')) {
-                            return;
-                        }
-                    }
+                    };
 
-                    if (!this.__waiting_response) {
-                        process();
-                    } else if (this.state == this.end_state) {
-                        this.end();
+                    if (this.state == this.end_state) {
+                        this.end().then(execute_actions);
+                    } else {
+                        execute_actions();
                     }
                     this.__processing = false;
                 }.bind(this), function(result) {
@@ -103,7 +101,7 @@
             // TODO
         },
         end: function() {
-            Sao.rpc({
+            return Sao.rpc({
                 'method': 'wizard.' + this.action + '.delete',
                 'params': [this.session_id, this.session.context]
             }, this.session);
@@ -202,15 +200,15 @@
             // TODO set size
             this.dialog.dialog('open');
         },
-        destroy: function() {
+        destroy: function(action) {
             Sao.Wizard.Dialog._super.destroy.call(this);
             this.dialog.dialog('destroy');
             // TODO other dialogs
-            // TODO reload under screen
+            // TODO reload under screen and action
         },
         end: function() {
-            Sao.Wizard.Dialog._super.end.call(this);
-            this.destroy();
+            return Sao.Wizard.Dialog._super.end.call(this).then(
+                    this.destroy.bind(this));
         },
         show: function() {
             this.dialog.dialog('open');

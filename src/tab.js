@@ -16,9 +16,8 @@
             var tab_header = jQuery('<div/>', {
                 'class': 'tab-header ui-widget-header ui-corner-all'
             });
-            
-            var title = this.make_title_bar();
-            tab_header.append(title);
+            this.title = this.make_title_bar();
+            tab_header.append(this.title)
 
             var toolbar = this.create_toolbar();
             tab_header.append(toolbar);
@@ -71,6 +70,9 @@
                 var icon = definition[0];
                 var name = definition[1];
                 var func = definition[2];
+                if (!func) {
+                    return;
+                }
                 var item = jQuery('<li/>').append(
                     jQuery('<a/>').append(jQuery('<span/>', {
                         'class': 'ui-icon ' + icon
@@ -143,7 +145,16 @@
                 }
             });
         }
+        if (Sao.main_menu_screen) {
+            Sao.main_menu_screen.save_tree_state();
+            Sao.main_menu_screen = null;
+        }
         return jQuery.when();
+    };
+    Sao.Tab.tabs.close_current = function() {
+        var tabs = jQuery('#tabs > div');
+        var tab = Sao.Tab.tabs[tabs.tabs('option', 'active')];
+        tab.close();
     };
 
     Sao.Tab.create = function(attributes) {
@@ -191,6 +202,13 @@
             this.attributes = jQuery.extend({}, attributes);
             this.name = attributes.name; // XXX use screen current view title
 
+            if (!Sao.common.MODELHISTORY.contains(model_name)) {
+                this.menu_def = jQuery.extend([], this.menu_def);
+                this.menu_def[10] = jQuery.extend([], this.menu_def[10]);
+                // Remove callback to revision
+                this.menu_def[10][2] = null;
+            }
+
             this.create_tabcontent();
 
             var access = Sao.common.MODELACCESS.get(model_name);
@@ -216,6 +234,7 @@
                         screen.search_filter();
                     }
                 }
+                this.update_revision();
             }.bind(this));
         },
         // TODO translate labels
@@ -241,7 +260,8 @@
             ['ui-icon-arrowthick-1-w', 'Previous', 'previous'],
             ['ui-icon-arrowthick-1-e', 'Next', 'next'],
             ['ui-icon-search', 'Search', 'search'],
-            ['ui-icon-clock', 'View Logs', 'logs'],
+            ['ui-icon-clock', 'View Logs...', 'logs'],
+            ['ui-icon-clock', 'Show revisions...', 'revision'],
             ['ui-icon-circle-close', 'Close Tab', 'close'],
             ['ui-icon-pin-w', 'Attachment', 'attach'],
             ['ui-icon-gear', 'Action', 'action'],
@@ -280,6 +300,21 @@
                             at: 'left bottom',
                             of: button
                         });
+                        if (menu_action[0] == 'action') {
+                            menu.find('.action_button').remove();
+                            var buttons = screen.get_buttons();
+                            buttons.forEach(function(button) {
+                                var item = jQuery('<li/>', {
+                                    'class': 'ui-menu-item action_button'
+                                }).append(
+                                    jQuery('<a/>').append(
+                                        button.attributes.string || ''));
+                                menu.append(item);
+                                item.click(function() {
+                                    screen.button(button.attributes);
+                                });
+                            });
+                        }
                         // Bind hide after the processing of the current click
                         window.setTimeout(function() {
                             jQuery(document).one('click', function() {
@@ -293,17 +328,26 @@
                             jQuery('<a/>').append(action.name));
                         menu.append(item);
                         item.click(function() {
-                            var exec_action = jQuery.extend({}, action);
-                            // TODO test save
-                            exec_action = Sao.Action.evaluate(exec_action,
-                                menu_action[0], screen.current_record);
-                            var data = {
-                                model: screen.model_name,
-                                id: screen.get_id(),
-                                ids: [screen.get_id()] // TODO ids selected
-                            };
-                            Sao.Action.exec_action(exec_action, data,
-                                screen.context);
+                            screen.save_current().then(function() {
+                                var exec_action = jQuery.extend({}, action);
+                                var record_id = null;
+                                if (screen.current_record) {
+                                    record_id = screen.current_record.id;
+                                }
+                                var record_ids = screen.current_view
+                                .selected_records().map(function(record) {
+                                    return record.id;
+                                });
+                                exec_action = Sao.Action.evaluate(exec_action,
+                                    menu_action[0], screen.current_record);
+                                var data = {
+                                    model: screen.model_name,
+                                    id: record_id,
+                                    ids: record_ids
+                                };
+                                Sao.Action.exec_action(exec_action, data,
+                                    screen.context);
+                            });
                         });
                     });
                     menu.menu({}).hide().css({
@@ -461,6 +505,63 @@
                 });
                 message += 'Model: ' + this.screen.model.name;
                 Sao.common.message.run(message);
+            }.bind(this));
+        },
+        revision: function() {
+            var current_id = null;
+            if (this.screen.current_record) {
+                current_id = this.screen.current_record.id;
+            }
+            var set_revision = function(revision) {
+                if (revision) {
+                    // Add a millisecond as microseconds are truncated
+                    revision.setMilliseconds(revision.getMilliseconds() + 1);
+                }
+                if (revision != this.screen.context._datetime) {
+                    // Update screen context that will be propagated by
+                    // recreating new group
+                    this.screen.context._datetime = revision;
+                    if (this.screen.current_view.view_type != 'form') {
+                        this.screen.search_filter(
+                                this.screen.screen_container
+                                .search_entry.val());
+                    } else {
+                        // Test if record exist in revisions
+                        this.screen.new_group([current_id]);
+                    }
+                    this.screen.display();
+                    this.update_revision();
+                }
+            }.bind(this);
+            this.modified_save().done(function() {
+                var ids = this.screen.current_view.selected_records().map(
+                    function(record) {
+                        return record.id;
+                    });
+                this.screen.model.execute('history_revisions',
+                    [ids], this.screen.context)
+                    .then(function(revisions) {
+                        new Sao.Window.Revision(revisions, set_revision);
+                    });
+            }.bind(this));
+        },
+        update_revision: function() {
+            var revision = this.screen.context._datetime;
+            var label;
+            if (revision) {
+                var date_format = Sao.common.date_format();
+                var time_format = '%H:%M:%S.%f';
+                revision = Sao.common.format_datetime(date_format, time_format,
+                        revision);
+                label = this.name + ' @ '+ revision;
+            } else {
+                label = this.name;
+            }
+            this.title.find('button').button({
+                label: label
+            });
+            ['new', 'save'].forEach(function(button) {
+                this.buttons[button].prop('disabled', revision);
             }.bind(this));
         },
         attach: function() {

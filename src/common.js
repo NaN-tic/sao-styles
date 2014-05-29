@@ -8,6 +8,8 @@
     Sao.common.BACKSPACE_KEYCODE = 8;
     Sao.common.TAB_KEYCODE = 9;
     Sao.common.RETURN_KEYCODE = 13;
+    Sao.common.UP_KEYCODE = 38;
+    Sao.common.DOWN_KEYCODE = 40;
     Sao.common.DELETE_KEYCODE = 46;
     Sao.common.F2_KEYCODE = 113;
     Sao.common.F3_KEYCODE = 114;
@@ -97,7 +99,8 @@
         var pad = Sao.common.pad;
         return format.replace('%H', pad(date.getHours(), 2))
             .replace('%M', pad(date.getMinutes(), 2))
-            .replace('%S', pad(date.getSeconds(), 2));
+            .replace('%S', pad(date.getSeconds(), 2))
+            .replace('%f', pad(date.getMilliseconds(), 3));
     };
 
     Sao.common.parse_time = function(format, value) {
@@ -114,7 +117,8 @@
             }
             return 0;
         };
-        return new Sao.Time(getNumber('%H'), getNumber('%M'), getNumber('%S'));
+        return new Sao.Time(getNumber('%H'), getNumber('%M'), getNumber('%S'),
+                getNumber('%f'));
     };
 
     Sao.common.format_datetime = function(date_format, time_format, date) {
@@ -184,6 +188,25 @@
     });
     Sao.common.MODELACCESS = new Sao.common.ModelAccess();
 
+    Sao.common.ModelHistory = Sao.class_(Object, {
+        init: function() {
+            this._models = [];
+        },
+        load_history: function() {
+            this._models = [];
+            return Sao.rpc({
+                'method': 'model.ir.model.list_history',
+                'params': [{}]
+            }, Sao.Session.current_session).then(function(models) {
+                this._models = models;
+            }.bind(this));
+        },
+        contains: function(model) {
+            return ~this._models.indexOf(model);
+        }
+    });
+    Sao.common.MODELHISTORY = new Sao.common.ModelHistory();
+
     Sao.common.humanize = function(size) {
         var sizes = ['bytes', 'KB', 'MB', 'GB', 'TB', 'PB'];
         for (var i =0, len = sizes.length; i < len; i++) {
@@ -233,6 +256,9 @@
         this._last_domain = null;
         this._values2selection = {};
         this._domain_cache = {};
+        if (this.nullable_widget === undefined) {
+            this.nullable_widget = true;
+        }
     };
     Sao.common.selection_mixin.init_selection = function(key, callback) {
         if (!key) {
@@ -256,7 +282,7 @@
         if (!(selection instanceof Array) &&
                 !(key in this._values2selection)) {
             var prm;
-            if (key) {
+            if (this.attributes.selection_change_with) {
                 var params = {};
                 key.forEach(function(e) {
                     params[e[0]] = e[1];
@@ -282,18 +308,30 @@
             }
             return;
         }
+        var domain = field.get_domain(record);
+        if (field.description.type == 'reference') {
+            // The domain on reference field is not only based on the selection
+            // so the selection can not be filtered.
+            domain = [];
+        }
         if (!('relation' in this.attributes)) {
             var change_with = this.attributes.selection_change_with || [];
             var key = [];
             var args = record._get_on_change_args(change_with);
+            delete args.id;
             for (var k in args) {
                 key.push([k, args[k]]);
             }
             key.sort();
             Sao.common.selection_mixin.init_selection.call(this, key,
-                    callback);
+                    function() {
+                        Sao.common.selection_mixin.filter_selection.call(this,
+                            domain, record, field);
+                        if (callback) {
+                            callback(this.selection);
+                        }
+                    }.bind(this));
         } else {
-            var domain = field.get_domain(record);
             var jdomain = JSON.stringify(domain);
             if (jdomain in this._domain_cache) {
                 this.selection = this._domain_cache[jdomain];
@@ -315,7 +353,9 @@
                 result.forEach(function(x) {
                     selection.push([x.id, x.rec_name]);
                 });
-                selection.push([null, '']);
+                if (this.nullable_widget) {
+                    selection.push([null, '']);
+                }
                 this._last_domain = domain;
                 this._domain_cache[jdomain] = selection;
                 this.selection = jQuery.extend([], selection);
@@ -331,6 +371,18 @@
                 }
             }.bind(this));
         }
+    };
+    Sao.common.selection_mixin.filter_selection = function(
+            domain, record, field) {
+        if (jQuery.isEmptyObject(domain)) {
+            return;
+        }
+        var inversion = new Sao.common.DomainInversion();
+        this.selection = this.selection.filter(function(value) {
+            var context = {};
+            context[this.field_name] = value[0];
+            return inversion.eval_domain(domain, context);
+        }.bind(this));
     };
     Sao.common.selection_mixin.get_inactive_selection = function(value) {
         if (!this.attributes.relation) {
@@ -375,6 +427,9 @@
             var states;
             if (record) {
                 states = record.expr_eval(this.attributes.states || {});
+                if (record.group.get_readonly() || record.readonly) {
+                    states.readonly = true;
+                }
             } else {
                 states = {};
             }
@@ -635,7 +690,8 @@
                 var def_operator = this.default_operator(field);
                 if ((def_operator == operator.trim()) ||
                         (operator.contains(def_operator) &&
-                         operator.contains('not'))) {
+                         (operator.contains('not') ||
+                          operator.contains('!')))) {
                     operator = operator.replace(def_operator, '')
                         .replace('not', '!').trim();
                 }
@@ -648,7 +704,7 @@
                 }
                 var formatted_value = this.format_value(field, value, target);
                 if (~this.OPERATORS.indexOf(operator) &&
-                        ~['char', 'text', 'sha', 'selection']
+                        ~['char', 'text', 'selection']
                         .indexOf(field.type) &&
                         (value === '')) {
                     formatted_value = '""';
@@ -1268,9 +1324,12 @@
             'child_of': function() {return true;},
             'not child_of': function() {return true;}
         },
-        locale_part: function(expression, field_name) {
+        locale_part: function(expression, field_name, locale_name) {
+            if (locale_name === undefined) {
+                locale_name = 'id';
+            }
             if (expression === field_name) {
-                return 'id';
+                return locale_name;
             }
             if (expression.contains('.')) {
                 return expression.split('.').slice(1).join('.');
@@ -1294,7 +1353,9 @@
                 // value in the evaluation context is deemed suffisant
                 return Boolean(context[field.split('.')[0]]);
             }
-            if ((operand == '=') && !context[field] && (boolop === this.and)) {
+            if ((operand == '=') &&
+                    (context[field] === null || context[field] === undefined) &&
+                    (boolop === this.and)) {
                 // We should consider that other domain inversion will set a
                 // correct value to this field
                 return true;
@@ -1312,6 +1373,14 @@
             } else if ((context_field instanceof Array) &&
                     (typeof value == 'string') && context_field.length == 2) {
                 context_field = context_field.join(',');
+            }
+            if (~['=', '!='].indexOf(operand) &&
+                    context_field instanceof Array &&
+                    typeof value == 'number') {
+                operand = {
+                    '=': 'in',
+                    '!=': 'not in'
+                }[operand];
             }
             return this.OPERATORS[operand](context_field, value);
         },
@@ -1361,22 +1430,15 @@
                         return [domain[3]].concat(domain.slice(1, -1));
                     }
                 }
-                return [this.locale_part(domain[0], field_name)]
+                var local_name = 'id';
+                if (typeof domain[2] == 'string') {
+                    local_name = 'rec_name';
+                }
+                return [this.locale_part(domain[0], field_name, local_name)]
                     .concat(domain.slice(1));
             } else {
                 return domain.map(function(e) {
                     return this.localize_domain(e, field_name);
-                }.bind(this));
-            }
-        },
-        unlocalize_domain: function(domain, fieldname) {
-            if (~['AND', 'OR', true, false].indexOf(domain)) {
-                return domain;
-            } else if (this.is_leaf(domain)) {
-                return [fieldname + '.' + domain[0]].concat(domain.slice(1));
-            } else {
-                return domain.map(function(e) {
-                    return this.unlocalize_domain(e, fieldname);
                 }.bind(this));
             }
         },
@@ -1417,6 +1479,18 @@
                 return [this.merge(domain)];
             }
         },
+        concat: function(domains, domoperator) {
+            var result = [];
+            if (domoperator) {
+                result.push(domoperator);
+            }
+            domains.forEach(function append(domain) {
+                if (!jQuery.isEmptyObject(domain)) {
+                    result.push(domain);
+                }
+            });
+            return this.simplify(this.merge(result));
+        },
         parse: function(domain) {
             var And = Sao.common.DomainInversion.And;
             var Or = Sao.common.DomainInversion.Or;
@@ -1447,12 +1521,16 @@
     });
     Sao.common.DomainInversion.in_ = function(a, b) {
         if (a instanceof Array) {
-            for (var i = 0, len = a.length; i < len; i++) {
-                if (~b.indexOf(a[i])) {
-                    return true;
+            if (b instanceof Array) {
+                for (var i = 0, len = a.length; i < len; i++) {
+                    if (~b.indexOf(a[i])) {
+                        return true;
+                    }
                 }
+                return false;
+            } else {
+                return Boolean(~a.indexOf(b));
             }
-            return false;
         } else {
             return Boolean(~b.indexOf(a));
         }
@@ -1604,6 +1682,7 @@
         'tryton-attachment-hi',
         'tryton-attachment',
         'tryton-bookmark',
+        'tryton-cancel',
         'tryton-clear',
         'tryton-close',
         'tryton-connect',
@@ -1632,6 +1711,7 @@
         'tryton-mail-message-new',
         'tryton-mail-message',
         'tryton-new',
+        'tryton-ok',
         'tryton-open',
         'tryton-preferences-system-session',
         'tryton-preferences-system',
@@ -1659,22 +1739,27 @@
         name2id: {},
         loaded_icons: {},
         tryton_icons: [],
+        register_prm: jQuery.when(),
         load_icons: function(refresh) {
             refresh = refresh || false;
             if (!refresh) {
-                this.name2id = {};
                 for (var icon_name in this.load_icons) {
                     if (!this.load_icons.hasOwnProperty(icon_name)) {
                         continue;
                     }
                     window.URL.revokeObjectURL(this.load_icons[icon_name]);
                 }
-                this.loaded_icons = {};
             }
-            this.tryton_icons = [];
 
             var icon_model = new Sao.Model('ir.ui.icon');
-            return icon_model.execute('list_icons', []).then(function(icons) {
+            return icon_model.execute('list_icons', [], {})
+            .then(function(icons) {
+                if (!refresh) {
+                    this.name2id = {};
+                    this.loaded_icons = {};
+                }
+                this.tryton_icons = [];
+
                 var icon_id, icon_name;
                 for (var i=0, len=icons.length; i < len; i++) {
                     icon_id = icons[i][0];
@@ -1694,6 +1779,14 @@
                     ~Sao.common.LOCAL_ICONS.indexOf(icon_name)) {
                 return jQuery.when(this.get_icon_url(icon_name));
             }
+            if (this.register_prm.state() == 'pending') {
+                var waiting_prm = jQuery.Deferred();
+                this.register_prm.then(function() {
+                    this.register_icon(icon_name).then(
+                        waiting_prm.resolve, waiting_prm.reject);
+                }.bind(this));
+                return waiting_prm;
+            }
             var loaded_prm;
             if (!(icon_name in this.name2id)) {
                 loaded_prm = this.load_icons(true);
@@ -1702,7 +1795,7 @@
             }
 
             var icon_model = new Sao.Model('ir.ui.icon');
-            return loaded_prm.then(function () {
+            this.register_prm = loaded_prm.then(function () {
                 var find_array = function(array) {
                     var idx, l;
                     for (idx=0, l=this.tryton_icons.length; idx < l; idx++) {
@@ -1723,7 +1816,7 @@
                 });
 
                 var read_prm = icon_model.execute('read',
-                    [ids, ['name', 'icon']]);
+                    [ids, ['name', 'icon']], {});
                 return read_prm.then(function(icons) {
                     icons.forEach(function(icon) {
                         var blob = new Blob([icon.icon],
@@ -1738,6 +1831,7 @@
                     return this.get_icon_url(icon_name);
                 }.bind(this));
             }.bind(this));
+            return this.register_prm;
         },
         get_icon_url: function(icon_name) {
             if (icon_name in this.loaded_icons) {

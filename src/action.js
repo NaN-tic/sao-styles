@@ -16,6 +16,7 @@
         } else {
             data = jQuery.extend({}, data);
         }
+        data.action_id = action.id;
         var params = {};
         switch (action.type) {
             case 'ir.action.act_window':
@@ -37,7 +38,7 @@
                 }
                 var ctx = {
                     active_model: data.res_model,
-                    active_id: data.id || false,
+                    active_id: data.id || null,
                     active_ids: data.ids
                 };
                 var session = Sao.Session.current_session;
@@ -48,6 +49,7 @@
                         action.pyson_context || '{}');
                 ctx = jQuery.extend(ctx, params.context);
                 ctx = jQuery.extend(ctx, context);
+                params.context = jQuery.extend(params.context, context);
 
                 var domain_context = jQuery.extend({}, ctx);
                 domain_context.context = ctx;
@@ -77,7 +79,6 @@
                 params.model = action.res_model || data.res_model;
                 params.res_id = action.res_id || data.res_id;
                 params.limit = action.limit;
-                params.auto_refresh = action.auto_refresh;
                 params.icon = action['icon.rec_name'] || '';
                 Sao.Tab.create(params);
                 return;

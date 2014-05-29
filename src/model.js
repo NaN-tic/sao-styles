@@ -44,7 +44,7 @@
                 return jQuery.when();
             }
             var record = records[0];
-            var root_group = record.group.root_group;
+            var root_group = record.group.root_group();
             // TODO test same model
             // TODO test same root group
             records = records.filter(function(record) {
@@ -81,9 +81,23 @@
         array.parent_datetime_field = undefined;
         array.record_removed = [];
         array.record_deleted = [];
+        array.__readonly = false;
+        array.skip_model_access = false;
         array.forEach(function(e, i, a) {
             e.group = a;
         });
+        array.get_readonly = function() {
+            // Must skip res.user for Preference windows
+            if (this.context._datetime ||
+                    (!Sao.common.MODELACCESS.get(this.model.name).write &&
+                     !this.skip_model_access)) {
+                return true;
+            }
+            return this.__readonly;
+        };
+        array.set_readonly = function(value) {
+            this.__readonly = value;
+        };
         array.load = function(ids, modified) {
             var new_records = [];
             var i, len;
@@ -137,8 +151,8 @@
             return record;
         };
         array.add = function(record, position) {
-            if (position === undefined) {
-                position = -1;
+            if ((position === undefined) || (position == -1)) {
+                position = this.length;
             }
             if (record.group != this) {
                 record.group = this;
@@ -158,6 +172,18 @@
             }
             record._changed.id = true;
             this.changed();
+            // Set parent field to trigger on_change
+            if (this.parent && this.model.fields[this.parent_name]) {
+                var field = this.model.fields[this.parent_name];
+                if ((field instanceof Sao.field.Many2One) ||
+                        field instanceof Sao.field.Reference) {
+                    var value = [this.parent.id, ''];
+                    if (field instanceof Sao.field.Reference) {
+                        value = [this.parent.model_name, value];
+                    }
+                    field.set_client(record, value);
+                }
+            }
             return record;
         };
         array.remove = function(record, remove, modified, force_remove) {
@@ -212,11 +238,17 @@
             }
             this.parent._changed[this.child_name] = true;
             var prm = jQuery.Deferred();
-            this.parent.model.fields[this.child_name].changed(this.parent).then(
-                    function() {
-                        // TODO validate parent
-                        this.parent.group.changed().done(prm.resolve);
-                    }.bind(this));
+            var changed_prm = this.parent.model.fields[this.child_name]
+                .changed(this.parent);
+            // One2Many.changed could return undefined
+            if (changed_prm) {
+                changed_prm.then(function() {
+                    // TODO validate parent
+                    this.parent.group.changed().done(prm.resolve);
+                }.bind(this));
+            } else {
+                prm.resolve();
+            }
             return prm;
         };
         array.root_group = function() {
@@ -357,7 +389,6 @@
             return this.validate(fields);
         },
         load: function(name) {
-            var self = this;
             var fname;
             var prm;
             if ((this.id < 0) || (name in this._loaded)) {
@@ -406,8 +437,8 @@
                 fnames = Object.keys(this.model.fields);
             }
             fnames = fnames.filter(function(e, i, a) {
-                return !(e in self._loaded);
-            });
+                return !(e in this._loaded);
+            }.bind(this));
             var fnames_to_fetch = fnames.slice();
             var rec_named_fields = ['many2one', 'one2one', 'reference'];
             for (var i in fnames) {
@@ -423,11 +454,8 @@
 
             var context = jQuery.extend({}, this.get_context());
             if (loading == 'eager') {
-                var limit = Sao.config.limit;
-                if (!this.group.parent) {
-                    // If not a children no need to load too much
-                    limit = parseInt(limit / fnames_to_fetch.length, 10);
-                }
+                var limit = parseInt(Sao.config.limit / fnames_to_fetch.length,
+                        10);
 
                 var filter_group = function(record) {
                     return !(name in record._loaded) && (record.id >= 0);
@@ -440,7 +468,7 @@
                     if (~idx) {
                         var length = group.length;
                         var n = 1;
-                        while (Object.keys(id2record).length &&
+                        while (Object.keys(id2record).length < limit &&
                             ((idx - n >= 0) || (idx + n < length)) &&
                             (n < 2 * limit)) {
                                 var record;
@@ -630,13 +658,19 @@
             }
             return value;
         },
-        get_on_change_value: function() {
+        get_on_change_value: function(skip) {
             var value = {};
             for (var key in this.model.fields) {
-                if (!this.model.fields.hasOwnProperty(key) && this.id >= 0)
+                if (skip && ~skip.indexOf(key)) {
                     continue;
+                }
+                if ((this.id >= 0) &&
+                        (!this._loaded[key] || !this._changed[key])) {
+                    continue;
+                }
                 value[key] = this.model.fields[key].get_on_change_value(this);
             }
+            value.id = this.id;
             return value;
         },
         _get_on_change_args: function(args) {
@@ -651,6 +685,7 @@
                 });
                 result[arg] = scope;
             });
+            result.id = this.id;
             return result;
         },
         on_change: function(fieldname, attr) {
@@ -769,7 +804,7 @@
         expr_eval: function(expr) {
             if (typeof(expr) != 'string') return expr;
             var ctx = jQuery.extend({}, this.get_context());
-            ctx.context = jQuery.extend(this.model.session.context, ctx);
+            ctx.context = jQuery.extend({}, this.model.session.context, ctx);
             jQuery.extend(ctx, this.get_eval());
             ctx.active_model = this.model.name;
             ctx.active_id = this.id;
@@ -846,6 +881,13 @@
             return Sao.common.compare(Object.keys(this.model.fields),
                     Object.keys(this._loaded));
         },
+        root_parent: function root_parent() {
+            var parent = this;
+            while (!parent.group.parent) {
+                parent = parent.group.parent;
+            }
+            return parent;
+        },
         deleted: function() {
             return Boolean(~this.group.record_deleted.indexOf(this));
         },
@@ -863,7 +905,7 @@
                     method: 'model.ir.attachment.search_count',
                     params: [
                     [['resource', '=', this.model.name + ',' + this.id]],
-                    {}]
+                    this.get_context()]
                 }, this.model.session);
             } else {
                 prm.resolve(this.attachment_count);
@@ -922,7 +964,11 @@
             record._values[this.name] = value;
         },
         get: function(record) {
-            return record._values[this.name] || this._default;
+            var value = record._values[this.name];
+            if (value === undefined) {
+                value = this._default;
+            }
+            return value;
         },
         set_client: function(record, value, force_change) {
             var previous_value = this.get(record);
@@ -968,7 +1014,7 @@
         changed: function(record) {
             var prms = [];
             // TODO check readonly
-            if (this.description.on_change) {
+            if (!jQuery.isEmptyObject(this.description.on_change)) {
                 prms.push(record.on_change(this.name,
                             this.description.on_change));
             }
@@ -1002,19 +1048,12 @@
             var screen_domain = domains[0];
             var attr_domain = domains[1];
             var inversion = new Sao.common.DomainInversion();
-            return [inversion.localize_domain(screen_domain), attr_domain];
+            return inversion.concat(
+                    [inversion.localize_domain(screen_domain), attr_domain]);
         },
         validation_domains: function(record) {
-            var domains = this.get_domains(record);
-            var screen_domain = domains[0];
-            var attr_domain = domains[1];
             var inversion = new Sao.common.DomainInversion();
-            if (!jQuery.isEmptyObject(attr_domain)) {
-                return [screen_domain, [screen_domain,
-                    inversion.unlocalize_domain(attr_domain, this.name)]];
-            } else {
-                return [screen_domain, screen_domain];
-            }
+            return inversion.concat(this.get_domains(record));
         },
         get_eval: function(record) {
             return this.get(record);
@@ -1039,15 +1078,19 @@
                         this.description[state];
                 }
             }.bind(this));
-            // TODO group readonly
-            // TODO domain readonly
+            if (record.group.get_readonly() ||
+                    this.get_state_attrs(record).domain_readonly) {
+                this.get_state_attrs(record).readonly = true;
+            }
         },
         get_state_attrs: function(record) {
             if (!(this.name in record.state_attrs)) {
                 record.state_attrs[this.name] = jQuery.extend(
                         {}, this.description);
             }
-            // TODO group readonly
+            if (record.group.get_readonly() || record.readonly) {
+                record.state_attrs[this.name].readonly = true;
+            }
             return record.state_attrs[this.name];
         },
         check_required: function(record) {
@@ -1065,9 +1108,8 @@
                 return true;
             }
             this.get_state_attrs(record).domain_readonly = false;
-            var domains = this.validation_domains(record);
-            var inverted_domain = domains[0];
-            var domain = domains[1];
+            var inversion = new Sao.common.DomainInversion();
+            var domain = inversion.simplify(this.validation_domains(record));
             if (!softvalidation) {
                 result &= this.check_required(record);
             }
@@ -1076,31 +1118,34 @@
             } else if (Sao.common.compare(domain, [['id', '=', null]])) {
                 result = false;
             } else {
-                var inversion = new Sao.common.DomainInversion();
-                if ((inverted_domain instanceof Array) &&
-                        (inverted_domain.length == 1) &&
-                        (inverted_domain[0][1] == '=')) {
+                if ((domain instanceof Array) &&
+                        (domain.length == 1) &&
+                        (domain[0][1] == '=')) {
                     // If the inverted domain is so constraint that only one
                     // value is possible we should use it. But we must also pay
                     // attention to the fact that the original domain might be
                     // a 'OR' domain and thus not preventing the modification
                     // of fields.
-                    var leftpart = inverted_domain[0][0];
-                    var value = inverted_domain[0][2];
+                    var leftpart = domain[0][0];
+                    var value = domain[0][2];
                     if (value === false) {
                         // XXX to remove once server domains are fixed
                         value = null;
                     }
                     var setdefault = true;
-                    var original_domain = inversion.merge(
-                            record.group.domain());
+                    var original_domain;
+                    if (!jQuery.isEmptyObject(record.group.domain())) {
+                        original_domain = inversion.merge(record.group.domain());
+                    } else {
+                        original_domain = inversion.merge(domain);
+                    }
                     var domain_readonly = original_domain[0] == 'AND';
                     if (leftpart.contains('.')) {
                         var recordpart = leftpart.split('.', 1)[0];
                         var localpart = leftpart.split('.', 1)[1];
                         var constraintfields = [];
                         if (domain_readonly) {
-                            inverted_domain.localize_domain(
+                            inversion.localize_domain(
                                     original_domain.slice(1))
                                 .forEach(function(leaf) {
                                     constraintfields.push(leaf);
@@ -1126,7 +1171,10 @@
     });
 
     Sao.field.Char = Sao.class_(Sao.field.Field, {
-        _default: ''
+        _default: '',
+        get: function(record) {
+            return Sao.field.Char._super.get.call(this, record) || this._default;
+        }
     });
 
     Sao.field.Selection = Sao.class_(Sao.field.Field, {
@@ -1213,13 +1261,6 @@
 
     Sao.field.Number = Sao.class_(Sao.field.Field, {
         _default: null,
-        get: function(record) {
-            if (record._values[this.name] === undefined) {
-                return this._default;
-            } else {
-                return record._values[this.name];
-            }
-        },
         digits: function(record) {
             var digits = [];
             var default_ = [16, 2];
@@ -1331,14 +1372,6 @@
 
     Sao.field.Many2One = Sao.class_(Sao.field.Field, {
         _default: null,
-        get: function(record) {
-            var value = record._values[this.name];
-            if (value === undefined) {
-                value = this._default;
-            }
-            // TODO force parent
-            return value;
-        },
         get_client: function(record) {
             var rec_name = record._values[this.name + '.rec_name'];
             if (rec_name === undefined) {
@@ -1349,7 +1382,6 @@
         },
         set: function(record, value) {
             var rec_name = record._values[this.name + '.rec_name'] || '';
-            // TODO force parent
             var store_rec_name = function(rec_name) {
                 record._values[this.name + '.rec_name'] = rec_name[0].rec_name;
             };
@@ -1364,7 +1396,6 @@
                 store_rec_name.call(this, [{'rec_name': rec_name}]);
             }
             record._values[this.name] = value;
-            // TODO force parent
         },
         set_client: function(record, value, force_change) {
             var rec_name;
@@ -1383,17 +1414,25 @@
                     force_change);
         },
         validation_domains: function(record) {
-            var screen_domain = this.get_domains(record)[0];
-            return [screen_domain, screen_domain];
+            return this.get_domains(record)[0];
         },
         get_domain: function(record) {
             var domains = this.get_domains(record);
             var screen_domain = domains[0];
             var attr_domain = domains[1];
             var inversion = new Sao.common.DomainInversion();
-            return [inversion.localize_domain(
-                    inversion.inverse_leaf(screen_domain), this.name),
-                   attr_domain];
+            return inversion.concat([inversion.localize_domain(
+                        inversion.inverse_leaf(screen_domain), this.name),
+                    attr_domain]);
+        },
+        get_on_change_value: function(record) {
+            if ((record.group.parent_name == this.name) &&
+                    record.group.parent) {
+                return record.group.parent.get_on_change_value(
+                        [record.group.child_name]);
+            }
+            return Sao.field.Many2One._super.get_on_change_value.call(
+                    this, record);
         }
     });
 
@@ -1408,22 +1447,13 @@
         },
         _default: null,
         _set_value: function(record, value, default_) {
+            this._set_default_value(record);
+            var group = record._values[this.name];
             var mode;
             if ((value instanceof Array) && !isNaN(parseInt(value[0], 10))) {
                 mode = 'list ids';
             } else {
                 mode = 'list values';
-            }
-            var group = record._values[this.name];
-            var model;
-            if (group !== undefined) {
-                model = group.model;
-                group.destroy();
-                // TODO unconnect
-            } else if (record.model.name == this.description.relation) {
-                model = record.model;
-            } else {
-                model = new Sao.Model(this.description.relation);
             }
             var prm = jQuery.when();
             if ((mode == 'list values') && !jQuery.isEmptyObject(value)) {
@@ -1450,28 +1480,15 @@
                 }
             }
             var set_value = function(fields) {
-                var group = Sao.Group(model, this.context, []);
-                group.set_parent(record);
-                group.parent_name = this.description.relation_field;
-                group.child_name = this.name;
                 if (!jQuery.isEmptyObject(fields)) {
                     group.model.add_fields(fields);
                 }
-                if (record._values[this.name] !== undefined) {
-                    for (var i = 0, len = record._values[this.name].length;
-                            i < len; i++) {
-                        var r = record._values[this.name][i];
-                        if (r.id >= 0) {
-                            group.record_deleted.push(r);
-                        }
-                    }
-                    jQuery.extend(group.record_deleted,
-                            record._values[this.name].record_deleted);
-                    jQuery.extend(group.record_removed,
-                            record._values[this.name].record_removed);
-                }
                 record._values[this.name] = group;
                 if (mode == 'list ids') {
+                    for (var i = 0, len = group.length; i < len; i++) {
+                        var old_record = group[i];
+                        group.remove(old_record, true);
+                    }
                     group.load(value);
                 } else {
                     for (var vals in value) {
@@ -1492,8 +1509,26 @@
             };
             return prm.pipe(set_value.bind(this));
         },
-        set: function(record, value) {
-            return this._set_value(record, value, false);
+        set: function(record, value, _default) {
+            if (_default === undefined) {
+                _default = false;
+            }
+            var group = record._values[this.name];
+            var model;
+            if (group !== undefined) {
+                model = group.model;
+                // TODO unconnect
+                group.destroy();
+            } else if (record.model.name == this.description.relation) {
+                model = record.model;
+            } else {
+                model = new Sao.Model(this.description.relation);
+            }
+            record._values[this.name] = undefined;
+            this._set_default_value(record, model);
+            // TODO unconnect
+            return this._set_value(record, value, _default);
+            // TODO connect
         },
         get: function(record) {
             var group = record._values[this.name];
@@ -1502,8 +1537,11 @@
             }
             var record_removed = group.record_removed;
             var record_deleted = group.record_deleted;
-            var result = [['add', []]];
+            var result = [];
             var parent_name = this.description.relation_field || '';
+            var to_add = [];
+            var to_create = [];
+            var to_write = [];
             for (var i = 0, len = group.length; i < len; i++) {
                 var record2 = group[i];
                 if (~record_removed.indexOf(record2) ||
@@ -1516,20 +1554,27 @@
                     delete values[parent_name];
                     if (record2.has_changed() &&
                             !jQuery.isEmptyObject(values)) {
-                        result.push(['write', [record2.id], values]);
+                        to_write.push([record2.id]);
+                        to_write.push(values);
                     }
-                    result[0][1].push(record2.id);
+                    to_add.push(record2.id);
                 } else {
                     values = record2.get();
                     delete values[parent_name];
-                    result.push(['create', [values]]);
+                    to_create.push(values);
                 }
             }
-            if (jQuery.isEmptyObject(result[0][1])) {
-                result.shift();
+            if (!jQuery.isEmptyObject(to_add)) {
+                result.push(['add', to_add]);
+            }
+            if (!jQuery.isEmptyObject(to_create)) {
+                result.push(['create', to_create]);
+            }
+            if (!jQuery.isEmptyObject(to_write)) {
+                result.push(['write'].concat(to_write));
             }
             if (!jQuery.isEmptyObject(record_removed)) {
-                result.push(['unlink', record_removed.map(function(r) {
+                result.push(['remove', record_removed.map(function(r) {
                     return r.id;
                 })]);
             }
@@ -1541,6 +1586,37 @@
             return result;
         },
         set_client: function(record, value, force_change) {
+            // domain inversion could try to set id as value
+            if (typeof value == 'number') {
+                value = [value];
+            }
+
+            var previous_ids = this.get_eval(record);
+            this._set_value(record, value);
+            if (!Sao.common.compare(previous_ids.sort(), value.sort())) {
+                record._changed[this.name] = true;
+                this.changed(record).done(function() {
+                    // TODO parent
+                    record.validate(null, true).then(function() {
+                        record.group.changed().done(function() {
+                            var root_group = record.group.root_group();
+                            root_group.screens.forEach(function(screen) {
+                                screen.display();
+                            });
+                        });
+                    });
+                });
+            } else if (force_change) {
+                record._changed[this.name] = true;
+                this.changed(record).done(function() {
+                    record.validate(null, true).then(function() {
+                        var root_group = record.group.root_group();
+                        root_group.screens.forEach(function(screen) {
+                            screen.display();
+                        });
+                    });
+                });
+            }
         },
         get_client: function(record) {
             this._set_default_value(record);
@@ -1548,25 +1624,10 @@
         },
         set_default: function(record, value) {
             var previous_group = record._values[this.name];
-            var prm = this._set_value(record, value, true);
-            prm.done(function() {
-                var group = record._values[this.name];
-                if (previous_group) {
-                    previous_group.forEach(function(r) {
-                        if (r.id >= 0) {
-                            group.record_deleted.push(r);
-                        }
-                    });
-                    group.record_deleted = group.record_deleted.concat(
-                        previous_group.record_deleted);
-                    group.record_removed = group.record_removed.concat(
-                        previous_group.record_removed);
-                }
-            }.bind(this));
+            this.set(record, value, true);
             record._changed[this.name] = true;
         },
         set_on_change: function(record, value) {
-            this._set_default_value(record);
             if (value instanceof Array) {
                 this._set_value(record, value);
                 record._changed[this.name] = true;
@@ -1578,7 +1639,11 @@
                 var context = this.get_context(record);
                 var fields = record._values[this.name].model.fields;
                 var field_names = {};
-                [value.add, value.update].forEach(function(l) {
+                var adding_values = [];
+                for (var i=0; i < value.add.length; i++) {
+                    adding_values.push(value.add[i][1]);
+                }
+                [adding_values, value.update].forEach(function(l) {
                     if (!jQuery.isEmptyObject(l)) {
                         l.forEach(function(v) {
                             Object.keys(v).forEach(function(f) {
@@ -1626,9 +1691,11 @@
                     group.model.add_fields(fields);
                     if (value.add) {
                         value.add.forEach(function(vals) {
+                            var index = vals[0];
+                            var data = vals[1];
                             var new_record = group.new_(false);
-                            group.add(new_record);
-                            new_record.set_on_change(vals);
+                            group.add(new_record, index);
+                            new_record.set_on_change(data);
                         });
                     }
                     if (value.update) {
@@ -1645,19 +1712,22 @@
                 }.bind(this));
             }
         },
-        _set_default_value: function(record) {
+        _set_default_value: function(record, model) {
             if (record._values[this.name] !== undefined) {
                 return;
             }
-            var group = Sao.Group(new Sao.Model(this.description.relation),
-                    this.context, []);
+            if (!model) {
+                model = new Sao.Model(this.description.relation);
+            }
+            if (record.model.name == this.description.relation) {
+                model = record.model;
+            }
+            var group = Sao.Group(model, this.context, []);
             group.set_parent(record);
             group.parent_name = this.description.relation_field;
             group.child_name = this.name;
-            if (record.model.name == this.description.relation) {
-                group.fields = record.model.fields;
-            }
             record._values[this.name] = group;
+            // TODO signal
         },
         get_eval: function(record) {
             var result = [];
@@ -1684,7 +1754,8 @@
                     i++) {
                 var record2 = group[i];
                 if (!record2.deleted() || !record2.removed())
-                    result.push(record2.get_on_change_value());
+                    result.push(record2.get_on_change_value(
+                                [this.description.relation_field || '']));
             }
             return result;
         },
@@ -1698,13 +1769,12 @@
             var screen_domain = domains[0];
             var attr_domain = domains[1];
             var inversion = new Sao.common.DomainInversion();
-            return [inversion.localize_domain(
-                    inversion.inverse_leaf(screen_domain)),
-                   attr_domain];
+            return inversion.concat([inversion.localize_domain(
+                        inversion.inverse_leaf(screen_domain), this.name),
+                    attr_domain]);
         },
         validation_domains: function(record) {
-            var screen_domain = this.get_domains(record)[0];
-            return [screen_domain, screen_domain];
+            return this.get_domains(record)[0];
         },
         set_state: function(record, states) {
             this._set_default_value(record);
@@ -1715,32 +1785,6 @@
     });
 
     Sao.field.Many2Many = Sao.class_(Sao.field.One2Many, {
-        set: function(record, value) {
-            var group = record._values[this.name];
-            var model;
-            if (group !== undefined) {
-                model = group.model;
-                group.destroy();
-                // TODO unconnect
-            } else if (record.model.name == this.description.relation) {
-                model = record.model;
-            } else {
-                model = new Sao.Model(this.description.relation);
-            }
-            group = Sao.Group(model, this.context, []);
-            group.set_parent(record);
-            group.parent_name = this.description.relation_field;
-            group.child_name = this.name;
-            if (record._values[this.name] !== undefined) {
-                jQuery.extend(group.record_removed, record._values[this.name]);
-                jQuery.extend(group.record_deleted,
-                    record._values[this.name].record_deleted);
-                jQuery.extend(group.record_removed,
-                    record._values[this.name].record_removed);
-            }
-            record._values[this.name] = group;
-            group.load(value);
-        },
         get_on_change_value: function(record) {
             return this.get_eval(record);
         }
@@ -1829,6 +1873,16 @@
             }
             record._values[this.name] = [ref_model, ref_id];
             store_rec_name(rec_name);
+        },
+        get_on_change_value: function(record) {
+            if ((record.group.parent_name == this.name) &&
+                    record.group.parent) {
+                return [record.group.parent.model_name,
+                    record.group.parent.get_on_change_value(
+                        [record.group.child_name])];
+            }
+            return Sao.field.Reference._super.get_on_change_value.call(
+                    this, record);
         }
     });
 

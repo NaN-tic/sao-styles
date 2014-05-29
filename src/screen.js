@@ -146,6 +146,9 @@
             this.domain = attributes.domain || null;
             this.limit = attributes.limit || Sao.config.limit;
             this.offset = 0;
+            if (!Sao.common.MODELACCESS.get(model_name).write) {
+                this.attributes.readonly = true;
+            }
             this.search_count = 0;
             this.screen_container = new Sao.ScreenContainer(
                 attributes.tab_domain);
@@ -299,6 +302,7 @@
         },
         new_group: function(ids) {
             var group = new Sao.Group(this.model, this.context, []);
+            group.set_readonly(this.attributes.readonly || false);
             if (ids) {
                 group.load(ids);
             }
@@ -341,7 +345,9 @@
                     if (index < group.length - 1) {
                         record = group[index + 1];
                         break;
-                    } else if (group.parent) {
+                    } else if (group.parent &&
+                            (record.group.model_name ==
+                             group.parent.group.model_name)) {
                         record = group.parent;
                         group = group.parent.group;
                     } else {
@@ -368,7 +374,9 @@
                     if (index > 0) {
                         record = group[index - 1];
                         break;
-                    } else if (group.parent) {
+                    } else if (group.parent &&
+                            (record.group.model_name ==
+                             group.parent.group.model_name)) {
                         record = group.parent;
                         group = group.parent.group;
                     } else {
@@ -444,9 +452,8 @@
                 if ((this.current_view.view_type == 'tree') &&
                         (!jQuery.isEmptyObject(this.group))) {
                     this.set_current_record(this.group[0]);
-                } else {
-                    return true;
                 }
+                return jQuery.when();
             }
             this.current_view.set_value();
             var fields = this.current_view.get_fields();
@@ -682,29 +689,80 @@
                 this.group.written(ids);
             }
             if (this.parent) {
-                this.parent.reload();
+                this.parent.root_parent().reload();
             }
             this.display();
         },
+        get_buttons: function() {
+            var selected_records = this.current_view.selected_records();
+            if (jQuery.isEmptyObject(selected_records)) {
+                return [];
+            }
+            var buttons = this.current_view.get_buttons();
+            selected_records.forEach(function(record) {
+                buttons = buttons.filter(function(button) {
+                    if (record.group.get_readonly() || record.readonly) {
+                        return false;
+                    }
+                    var states = record.expr_eval(
+                        button.attributes.states || {});
+                    return !(states.invisible || states.readonly);
+                });
+            });
+            return buttons;
+        },
         button: function(attributes) {
             // TODO confirm
+            var process_action = function(action) {
+                this.reload(ids, true);
+                if (typeof action == 'string') {
+                    var access = Sao.common.MODELACCESS.get(this.model_name);
+                    if (action == 'new') {
+                        if (access.create) {
+                            this.new_();
+                        }
+                    } else if (action == 'delete') {
+                        if (access['delete']) {
+                            this.remove(!this.parent, false, !this.parent);
+                        }
+                    } else if (action == 'remove') {
+                        if (access.write && access.read && this.parent) {
+                            this.remove(false, true, false);
+                        }
+                    } else if (action == 'copy') {
+                        if (access.create) {
+                            this.copy();
+                        }
+                    } else if (action == 'next') {
+                        this.display_next();
+                    } else if (action == 'previous') {
+                        this.display_previous();
+                    } else if (action == 'close') {
+                        Sao.Tab.close_current();
+                    } else if (action.startsWith('switch')) {
+                        var view_type = action.split(' ')[1];
+                        this.switch_view(view_type);
+                    }
+                }
+                else if (action) {
+                    Sao.Action.execute(action, {
+                        model: this.model_name,
+                        id: record.id,
+                        ids: ids
+                    }, null, this.context);
+                }
+            };
+
             var record = this.current_record;
+            var ids = this.current_view.selected_records().map(
+                function(record) {
+                    return record.id;
+                });
             record.save().done(function() {
-                var context = record.get_context();
                 record.model.execute(attributes.name,
-                    [[record.id]], context).then(
-                        function(action_id) {
-                            if (action_id) {
-                                Sao.Action.execute(action_id, {
-                                    model: this.model_name,
-                                    id: record.id,
-                                    ids: [record.id]
-                                }, null, context);
-                            }
-                            this.reload([record.id], true);
-                        }.bind(this),
+                    [ids], this.context).then(process_action.bind(this),
                         function() {
-                            this.reload([record.id], true);
+                            this.reload(ids, true);
                         }.bind(this));
             }.bind(this));
         },

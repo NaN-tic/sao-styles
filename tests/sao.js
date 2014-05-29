@@ -778,6 +778,33 @@
                 new Date(2010, 1, 22, 10, 30, 20, 2).valueOf());
     });
 
+    QUnit.test('PYSON Len', function() {
+        var value = new Sao.PYSON.Len([1, 2, 3]).pyson();
+        QUnit.strictEqual(value.__class__, 'Len', 'Len([1, 2, 3]).pyson()');
+        QUnit.ok(Sao.common.compare(value.v, [1, 2, 3]),
+            'Len([1, 2, 3]).pyson()');
+
+        QUnit.throws(function() {
+            new Sao.PYSON.Len(1);
+        }, 'value must be an object or a string', 'Len(1)');
+
+        QUnit.ok(Sao.common.compare(new Sao.PYSON.Len([1, 2, 3]).types(),
+                ['integer']), 'Len([1, 2, 3]).types()');
+
+        var eval_;
+        eval_ = new Sao.PYSON.Encoder().encode(new Sao.PYSON.Len([1, 2, 3]));
+        QUnit.strictEqual(new Sao.PYSON.Decoder().decode(eval_), 3,
+            'decode(Len([1, 2, 3]))');
+
+        eval_ = new Sao.PYSON.Encoder().encode(new Sao.PYSON.Len({1: 2, 3: 4}));
+        QUnit.strictEqual(new Sao.PYSON.Decoder().decode(eval_), 2,
+            'decode(Len({1: 2, 3: 4}))');
+
+        eval_ = new Sao.PYSON.Encoder().encode(new Sao.PYSON.Len('foo bar'));
+        QUnit.strictEqual(new Sao.PYSON.Decoder().decode(eval_), 7,
+            "decode(Len('foo bar'))");
+    });
+
     QUnit.test('DomainParser.group_operator', function() {
         var parser = new Sao.common.DomainParser();
         QUnit.ok(Sao.common.compare(parser.group_operator(['a', '>', '=']),
@@ -1057,11 +1084,18 @@
                 ['female', 'Female']
             ]
         };
-        [
+        var field_with_empty = jQuery.extend({}, field);
+        field_with_empty.selection = jQuery.extend(
+                [['', '']], field_with_empty.selection);
+        var tests = [
         ['Male', 'male'],
         ['male', 'male'],
-        ['test', 'test']
-        ].forEach(test_func, field);
+        ['test', 'test'],
+        [null, null],
+        ['', '']
+        ];
+        tests.forEach(test_func, field);
+        tests.forEach(test_func, field_with_empty);
 
         field = {
             'type': 'datetime',
@@ -1142,6 +1176,8 @@
             [['name', 'in', ['John', 'Jane']]]],
         [[['Name', '!', ['John', 'Jane']]],
             [['name', 'not in', ['John', 'Jane']]]],
+        [[['Selection', null, null]], [['selection', '=', null]]],
+        [[['Selection', null, '']], [['selection', '=', '']]],
         [[['Selection', null, ['Male', 'Female']]],
             [['selection', 'in', ['male', 'female']]]],
         [[['Integer', null, null]], [['integer', '=', null]]],
@@ -1243,13 +1279,18 @@
             'type': 'datetime',
             'format': '"%H:%M:%S"'
         };
-        [
+        var field_with_empty = jQuery.extend({}, field);
+        field_with_empty.selection = jQuery.extend(
+                [['', '']], field_with_empty.selection);
+        var tests = [
         [Sao.Date(2002, 11, 4), '2002-12-04'],
         [Sao.DateTime(2002, 11, 4), '2002-12-04'],
         [Sao.DateTime(2002, 11, 4, 12, 30), '"2002-12-04 12:30:00"'],
         [false, ''],
         [null, '']
-        ].forEach(test_func, field);
+        ];
+        tests.forEach(test_func, field);
+        tests.forEach(test_func, field_with_empty);
 
         field = {
             'type': 'date'
@@ -1284,6 +1325,14 @@
             'date': {
                 'string': 'Date',
                 'type': 'date'
+            },
+            'selection': {
+                'string': 'Selection',
+                'type': 'selection',
+                'selection': [
+                    ['male', 'Male'],
+                    ['femal', 'Femal']
+                ]
             },
             'reference': {
                 'string': 'Reference',
@@ -1329,6 +1378,11 @@
         [[], ''],
         [[['surname', 'ilike', '%Doe%']], '"(Sur)Name": Doe'],
         //[[['date', '>=', new Date(2012, 10, 24)]], 'Date: >=10/24/2012'],
+        [[['selection', '=', '']], 'Selection: '],
+        [[['selection', '=', null]], 'Selection: '],
+        [[['selection', '!=', '']], 'Selection: !""'],
+        [[['selection', '=', 'male']], 'Selection: Male'],
+        [[['selection', '!=', 'male']], 'Selection: !Male'],
         [[['reference', 'ilike', '%foo%']], 'Reference: foo'],
         [[['reference', 'ilike', '%bar%', 'spam']], 'Reference: Spam,bar'],
         [[['reference', 'in', ['foo', 'bar']]], 'Reference: foo;bar']
@@ -1397,7 +1451,7 @@
         QUnit.strictEqual(domain_inversion(domain, 'z', context), true,
             'domain_inversion(' + JSON.stringify(domain) + ', \'z\', ' +
                 JSON.stringify(context) + ')');
-        context = {y: false};
+        context = {y: null};
         QUnit.ok(compare(domain_inversion(domain, 'x', context),
                 [['x', '=', 3]]),
             'domain_inversion(' + JSON.stringify(domain) + ', \'x\', ' +
@@ -1453,7 +1507,7 @@
                 JSON.stringify(context) + ')');
 
         domain = ['OR', ['x', '=', 3], ['y', '=', 5]];
-        context = {y: false};
+        context = {y: null};
         QUnit.ok(compare(domain_inversion(domain, 'x', context),
                 [['x', '=', 3]]),
             'domain_inversion(' + JSON.stringify(domain) + ', \'x\', ' +
@@ -1699,6 +1753,28 @@
         });
     });
 
+    QUnit.test('DomainInversion concat', function() {
+        var domain_inversion = new Sao.common.DomainInversion();
+        var concat = domain_inversion.concat.bind(domain_inversion);
+        var compare = Sao.common.compare;
+
+        var domain1 = [['a', '=', 1]];
+        var domain2 = [['b', '=', 2]];
+
+        QUnit.ok(compare(concat([domain1, domain2]),
+                ['AND', ['a', '=', 1], ['b', '=', 2]]),
+            'compare(' + JSON.stringify([domain1, domain2]) + ')');
+        QUnit.ok(compare(concat([[], domain1]), domain1),
+            'compare(' + JSON.stringify([[], domain1]) + ')');
+        QUnit.ok(compare(concat([domain2, []]), domain2),
+            'compare(' + JSON.stringify([domain2, []]) + ')');
+        QUnit.ok(compare(concat([[], []]), []),
+            'compare(' + JSON.stringify([[], []]) + ')');
+        QUnit.ok(compare(concat([domain1, domain2], 'OR'),
+                ['OR', [['a', '=', 1]], [['b', '=', 2]]]),
+            'compare(' + JSON.stringify([domain1, domain2]) + ', \'OR\')');
+    });
+
     QUnit.test('DomainInversion evaldomain', function() {
         var domain_inversion = new Sao.common.DomainInversion();
         var eval_domain = domain_inversion.eval_domain.bind(domain_inversion);
@@ -1725,6 +1801,10 @@
         [['OR', ['x', '>', 10], ['x', '<', 0]], {'x': 11}, true],
         [['OR', ['x', '>', 10], ['x', '<', 0]], {'x': -4}, true],
         [['OR', ['x', '>', 10], ['x', '<', 0]], {'x': 5}, false],
+        [['OR', ['x', '>', 0], ['x', '=', null]], {'x': 1}, true],
+        [['OR', ['x', '>', 0], ['x', '=', null]], {'x': null}, true],
+        [['OR', ['x', '>', 0], ['x', '=', null]], {'x': -1}, false],
+        [['OR', ['x', '>', 0], ['x', '=', null]], {'x': 0}, false],
         [[['x', '>', 0], ['OR', ['x', '=', 3], ['x', '=', 2]]],
             {'x': 1}, false],
         [[['x', '>', 0], ['OR', ['x', '=', 3], ['x', '=', 2]]],
@@ -1754,7 +1834,9 @@
         [[['x', '=', ['test', 1]]], {'x': ['test', 1]}, true],
         [[['x', '=', ['test', 1]]], {'x': 'test,1'}, true],
         [[['x', '=', ['test', 1]]], {'x': ['test', 2]}, false],
-        [[['x', '=', ['test', 1]]], {'x': 'test,2'}, false]
+        [[['x', '=', ['test', 1]]], {'x': 'test,2'}, false],
+        [[['x', '=', 1]], {'x': [1, 2]}, true],
+        [[['x', '=', 1]], {'x': [2]}, false]
         ].forEach(function(test) {
             var domain = test[0];
             var context = test[1];
@@ -1780,6 +1862,11 @@
                 [['id', '=', 5], ['code', '=', 7]]),
             'localize_domain(' + JSON.stringify(domain) + ', \'x\')');
 
+        domain = [['x', 'ilike', 'foo%'], ['x.code', '=', 'test']];
+        QUnit.ok(compare(localize_domain(domain, 'x'),
+                [['rec_name', 'ilike', 'foo%'], ['code', '=', 'test']]),
+            'localize_domain(' + JSON.stringify(domain) + ', \'x\')');
+
         domain = ['OR', ['AND', ['x', '>', 7], ['x', '<', 15]],
             ['x.code', '=', 8]];
         QUnit.ok(compare(localize_domain(domain, 'x'),
@@ -1798,6 +1885,7 @@
             'localize_domain(' + JSON.stringify(domain) + ', \'x\')');
     });
 
+        /*
     QUnit.test('CRUD', function() {
         var run_tests = function() {
             var User = new Sao.Model('res.user');
@@ -1877,6 +1965,7 @@
             login_prm.done(run_tests);
         });
     });
+    */
 
     Sao.Session.renew_credentials = function(session, parent_dfd) {
         session.do_login(SaoTest.login, SaoTest.password, parent_dfd);
